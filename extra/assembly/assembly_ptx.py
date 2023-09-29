@@ -66,7 +66,9 @@ def specialize_to_ptx(lang, function_name):
         ins.append(f"{alu[arg]}{'.lo' if arg == BinaryOps.MUL and out.dtype != dtypes.float32 else ''}{'.rn' if arg == BinaryOps.DIV and out.dtype == dtypes.float32 else ''}.{dtype_to_nvtype[otype]} {out}, {', '.join(str(x) for x in vin)};")
     elif uop == UOps.LOAD:
       if arg.__class__ in (int, float):
-        ins.append(f"mov.{dtype_to_nvtype[out.dtype]} {out}, {'0f'+float_to_hex(arg) if dtypes.is_float(out.dtype) else int(arg)};")
+        ins.append(
+            f"mov.{dtype_to_nvtype[out.dtype]} {out}, {f'0f{float_to_hex(arg)}' if dtypes.is_float(out.dtype) else int(arg)};"
+        )
       elif arg[2] is not None and (arg[2] == dtypes.bool or arg[2] != out.dtype):
         dt = ('u16', dtypes.uint16) if arg[2] == dtypes.bool == out.dtype else ('u8', dtypes.uint8) if arg[2] == dtypes.bool else ('b16', dtypes.float16) if arg[2] == dtypes.half else (dtype_to_nvtype[arg[2]], arg[2])
         reg = lang.newreg((out, dt[0]), dtype=dt[1])
@@ -92,9 +94,15 @@ def specialize_to_ptx(lang, function_name):
     elif uop == UOps.COND_BRANCH:
       ins.append(f"@{'!' if not arg[1] else ''}{vin[0]} bra {arg[0]};")
 
-  ins_prefix = [".version 7.8", ".target " + arch(), ".address_size 64",
-                f".visible .entry {function_name}({', '.join(f'.param .u64 data{i}' for i in range(param_cnt))}) {{"]
-  for arg in [(dtype, lang.type_to_letter(dtype), c) for dtype,c in lang.cnts.items()]: ins_prefix.append(f".reg .{dtype_to_nvtype[arg[0][0]]} %{arg[1]}<{arg[2]}>;",)
+  ins_prefix = [
+      ".version 7.8",
+      f".target {arch()}",
+      ".address_size 64",
+      f".visible .entry {function_name}({', '.join(f'.param .u64 data{i}' for i in range(param_cnt))}) {{",
+  ]
+  ins_prefix.extend(f".reg .{dtype_to_nvtype[arg[0][0]]} %{arg[1]}<{arg[2]}>;"
+                    for arg in [(dtype, lang.type_to_letter(dtype), c)
+                                for dtype, c in lang.cnts.items()])
   ins = ins_prefix + ins
   ins += ["ret;", "}"]
   return '\n'.join(ins)

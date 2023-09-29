@@ -112,7 +112,7 @@ def InstanceNormalization(x: Tensor, scale: Tensor, bias: Tensor, epsilon=1e-05)
 
 def LayerNormalization(x: Tensor, scale, bias, axis=-1, epsilon=1e-05, stash_type=1):
   assert stash_type == 1, "only float32 is supported"
-  axis = tuple(i for i in range(axis if axis >= 0 else len(x.shape) + axis, len(x.shape)))
+  axis = tuple(range(axis if axis >= 0 else len(x.shape) + axis, len(x.shape)))
   mean = x.mean(axis=axis, keepdim=True)
   return x.layernorm(axis, epsilon).mul(scale).add(bias), mean, (x.sub(mean)).pow(2).mean(axis=axis, keepdim=True).add(epsilon).sqrt().reciprocal()
 
@@ -160,16 +160,82 @@ def Pad(x: Tensor, pads: Union[Tensor, Tuple[int, ...]], constant_value: Tensor=
   elif mode == "reflect":
     for i,s in enumerate(x.shape):
       if pads[i] == (0,0): continue
-      elif pads[i][0] and not pads[i][1]: x = x.flip(i).shrink(tuple([(0,s_) if i_ != i else (s-pads[i][0]-1, s_-1) for i_,s_ in enumerate(x.shape)])).pad(tuple([(0,0) if i_ != i else (0,s) for i_ in range(x.ndim)])) + x.pad(tuple([(0,0) if i_ != i else pads[i] for i_ in range(x.ndim)]))
-      elif not pads[i][0] and pads[i][1]: x = x.flip(i).shrink(tuple([(0,s_) if i_ != i else (1, pads[i][1]+1) for i_,s_ in enumerate(x.shape)])).pad(tuple([(0,0) if i_ != i else (s,0) for i_ in range(x.ndim)])) + x.pad(tuple([(0,0) if i_ != i else pads[i] for i_ in range(x.ndim)]))
-      else: x = x.flip(i).shrink(tuple([(0,s_) if i_ != i else (s-pads[i][0]-1, s_-1) for i_,s_ in enumerate(x.shape)])).pad(tuple([(0,0) if i_ != i else (0,s+pads[i][1]) for i_ in range(x.ndim)])) + x.flip(i).shrink(tuple([(0,s_) if i_ != i else (1, pads[i][1]+1) for i_,s_ in enumerate(x.shape)])).pad(tuple([(0,0) if i_ != i else (s+pads[i][0],0) for i_ in range(x.ndim)])) + x.pad(tuple([(0,0) if i_ != i else pads[i] for i_ in range(x.ndim)]))
+      elif pads[i][0] and not pads[i][1]:
+        x = x.flip(i).shrink(
+            tuple((0, s_) if i_ != i else (s - pads[i][0] - 1, s_ - 1)
+                  for i_, s_ in enumerate(x.shape))).pad(
+                      tuple((0, 0) if i_ != i else (0, s)
+                            for i_ in range(x.ndim))) + x.pad(
+                                tuple((0, 0) if i_ != i else pads[i]
+                                      for i_ in range(x.ndim)))
+      elif not pads[i][0] and pads[i][1]:
+        x = x.flip(i).shrink(
+            tuple((0, s_) if i_ != i else (1, pads[i][1] + 1)
+                  for i_, s_ in enumerate(x.shape))).pad(
+                      tuple((0, 0) if i_ != i else (s, 0)
+                            for i_ in range(x.ndim))) + x.pad(
+                                tuple((0, 0) if i_ != i else pads[i]
+                                      for i_ in range(x.ndim)))
+      else:else
+        x = (
+            x.flip(i).shrink(
+                tuple((0, s_) if i_ != i else (s - pads[i][0] - 1, s_ - 1)
+                      for i_, s_ in enumerate(x.shape))).pad(
+                          tuple((0, 0) if i_ != i else (0, s + pads[i][1])
+                                for i_ in range(x.ndim))) +
+            x.flip(i).shrink(
+                tuple((0, s_) if i_ != i else (1, pads[i][1] + 1)
+                      for i_, s_ in enumerate(x.shape))).pad(
+                          tuple((0, 0) if i_ != i else (s + pads[i][0], 0)
+                                for i_ in range(x.ndim))) +
+            x.pad(tuple(
+                (0, 0) if i_ != i else pads[i] for i_ in range(x.ndim))))
     return x
   elif mode == "edge":
     for i,s in enumerate(x.shape):
       if pads[i] == (0,0): continue
-      elif pads[i][0] and not pads[i][1]: x = x.shrink(tuple([(0,s_) if i_ != i else (0,1) for i_,s_ in enumerate(x.shape)])).expand([pads[i][0] if i_ == i else s_ for i_,s_ in enumerate(x.shape)]).pad(tuple([(0,0) if i_ != i else (0,s) for i_ in range(x.ndim)])) + x.pad(tuple([(0,0) if i_ != i else pads[i] for i_ in range(x.ndim)]))
-      elif not pads[i][0] and pads[i][1]: x = x.shrink(tuple([(0,s_) if i_ != i else (s_-1, s_) for i_,s_ in enumerate(x.shape)])).expand([pads[i][0] if i_ == i else s_ for i_,s_ in enumerate(x.shape)]).pad(tuple([(0,0) if i_ != i else (s+pads[i][0],0) for i_ in range(x.ndim)])) + x.pad(tuple([(0,0) if i_ != i else pads[i] for i_ in range(x.ndim)]))
-      else: x = x.shrink(tuple([(0,s_) if i_ != i else (0,1) for i_,s_ in enumerate(x.shape)])).expand([pads[i][0] if i_ == i else s_ for i_,s_ in enumerate(x.shape)]).pad(tuple([(0,0) if i_ != i else (0,s+pads[i][1]) for i_ in range(x.ndim)])) + x.shrink(tuple([(0,s_) if i_ != i else (s_-1, s_) for i_,s_ in enumerate(x.shape)])).expand([pads[i][1] if i_ == i else s_ for i_,s_ in enumerate(x.shape)]).pad(tuple([(0,0) if i_ != i else (s+pads[i][0],0) for i_ in range(x.ndim)])) + x.pad(tuple([(0,0) if i_ != i else pads[i] for i_ in range(x.ndim)]))
+      elif pads[i][0] and not pads[i][1]:
+        x = x.shrink(
+            tuple((0, s_) if i_ != i else (0, 1)
+                  for i_, s_ in enumerate(x.shape))).expand([
+                      pads[i][0] if i_ == i else s_
+                      for i_, s_ in enumerate(x.shape)
+                  ]).pad(
+                      tuple((0, 0) if i_ != i else (0, s)
+                            for i_ in range(x.ndim))) + x.pad(
+                                tuple((0, 0) if i_ != i else pads[i]
+                                      for i_ in range(x.ndim)))
+      elif not pads[i][0] and pads[i][1]:
+        x = x.shrink(
+            tuple((0, s_) if i_ != i else (s_ - 1, s_)
+                  for i_, s_ in enumerate(x.shape))).expand([
+                      pads[i][0] if i_ == i else s_
+                      for i_, s_ in enumerate(x.shape)
+                  ]).pad(
+                      tuple((0, 0) if i_ != i else (s + pads[i][0], 0)
+                            for i_ in range(x.ndim))) + x.pad(
+                                tuple((0, 0) if i_ != i else pads[i]
+                                      for i_ in range(x.ndim)))
+      else:else
+        x = (
+            x.shrink(
+                tuple((0, s_) if i_ != i else (0, 1)
+                      for i_, s_ in enumerate(x.shape))).expand([
+                          pads[i][0] if i_ == i else s_
+                          for i_, s_ in enumerate(x.shape)
+                      ]).pad(
+                          tuple((0, 0) if i_ != i else (0, s + pads[i][1])
+                                for i_ in range(x.ndim))) +
+            x.shrink(
+                tuple((0, s_) if i_ != i else (s_ - 1, s_)
+                      for i_, s_ in enumerate(x.shape))).expand([
+                          pads[i][1] if i_ == i else s_
+                          for i_, s_ in enumerate(x.shape)
+                      ]).pad(
+                          tuple((0, 0) if i_ != i else (s + pads[i][0], 0)
+                                for i_ in range(x.ndim))) +
+            x.pad(tuple(
+                (0, 0) if i_ != i else pads[i] for i_ in range(x.ndim))))
     return x
   elif mode == "constant":
     return _padding(x, seq_pads, axes=seq_axes, constant_value=constant_value)
@@ -181,9 +247,8 @@ def AveragePool(X, kernel_shape, auto_pad="NOTSET", ceil_mode=0, count_include_p
   padding_included = _padding(X, pads, auto_pad, axes=pixel_axes, strides=strides, kernel_shape=kernel_shape, dilations=dilations).avg_pool2d(kernel_shape, stride=strides)
   if count_include_pad:
     return padding_included
-  else:
-    div = _padding(Tensor.ones(*X.shape), pads, auto_pad, axes=pixel_axes, strides=strides, kernel_shape=kernel_shape, dilations=dilations).avg_pool2d(kernel_shape, stride=strides)
-    return padding_included / div
+  div = _padding(Tensor.ones(*X.shape), pads, auto_pad, axes=pixel_axes, strides=strides, kernel_shape=kernel_shape, dilations=dilations).avg_pool2d(kernel_shape, stride=strides)
+  return padding_included / div
 
 def MaxPool(X, kernel_shape, auto_pad="NOTSET", ceil_mode=0, dilations=1, pads=None, storage_order=0, strides=1):
   if ceil_mode: auto_pad = "SAME_UPPER"
@@ -217,7 +282,7 @@ def Conv(X, W, B=None, auto_pad="NOTSET", dilations=1, group=1, kernel_shape=Non
 def ConvTranspose(X, W, B=None, auto_pad="NOTSET", dilations=1, group=1, kernel_shape=None, pads=None, output_shape=None, output_padding=0, strides=1):
   if not kernel_shape: kernel_shape = W.shape
   if pads is None and auto_pad != "NOTSET": pads = _auto_pad(X, auto_pad, strides, kernel_shape, dilations)
-  elif pads is None and auto_pad == "NOTSET": pads = [0,0] * (X.ndim - 2)
+  elif pads is None: pads = [0,0] * (X.ndim - 2)
   strides_ = [1]*(W.ndim-1) + [strides] if isinstance(strides, int) else [1]*(W.ndim-len(strides)) + list(strides)
   dilations_ = [1]*(W.ndim-1) + [dilations] if isinstance(dilations, int) else [1]*(W.ndim-len(dilations)) + list(dilations)
   if output_shape and not output_padding:
@@ -237,7 +302,8 @@ def Dropout(data, ratio=0.5, training_mode=False, seed=None):
 
 def Shape(data, end=None, start=0): return Tensor(list(data.shape)[start:end], dtype=dtypes.int64)
 def Size(data): return prod(data if isinstance(data, list) else data.shape)
-def Flatten(input, axis=1): return input.reshape(prod((1,) + input.shape[0:axis]), -1)
+def Flatten(input, axis=1):
+  return input.reshape(prod((1,) + input.shape[:axis]), -1)
 
 # TODO: abstract out the broadcast logic in tensor
 def Expand(input, shape):
@@ -377,23 +443,29 @@ def SoftmaxCrossEntropyLoss(scores, labels, weights=None, ignore_index=None, red
   if ignore_index is not None: labels = (labels == ignore_index).where(C+1, labels)
   mask = labels.unsqueeze(1) == Tensor.arange(C).reshape(1, C, *[1]*len(s_dimensions))
   y = scores.log_softmax(axis=1)
-  if weights is not None: weights = weights.__getitem__(tuple([labels, *[slice(None)]*(weights.ndim-1)]))
+  if weights is not None:
+    weights = weights.__getitem__((labels, *[slice(None)]*(weights.ndim-1)))
   loss = (mask * -y).sum(1) if weights is None else (mask * -y).sum(1) * weights
   if reduction == "mean": loss = loss.sum() / (loss == 0).where(0, 1).sum() if weights is None else loss.sum() / weights.sum()
   elif reduction == "sum": loss = loss.sum()
   return loss, y
 
-def ArrayFeatureExtractor(input, indices): return input.__getitem__(tuple([slice(None) if i != (input.ndim-1) else indices for i in range(input.ndim)]))
+def ArrayFeatureExtractor(input, indices):
+  return input.__getitem__(
+      tuple(
+          slice(None) if i != (input.ndim - 1) else indices
+          for i in range(input.ndim)))
 def Gather(input, indices, axis=0):
-  if indices.numel() < 9: # NOTE lessor kernels for smaller indices but kernel number increases depending on size of indices
-    input_sh = list(input.shape)
-    ret_shape = input_sh[:axis] + list(indices.shape) + input_sh[axis+1:]
-    if indices.ndim > 1: indices = indices.flatten()
-    indices = [int(safe_numpy(indices))] if indices.shape == () else [input_sh[axis]+int(x) if x<0 else int(x) for x in safe_numpy(indices)]
-    args = [[(0,x) if j != axis else (i,i+1) for j, x in enumerate(input_sh)] for i in indices]
-    return input.shrink(arg=tuple(args[0])).cat(*[input.shrink(arg=tuple(arg)) for arg in args[1:]], dim=axis).reshape(ret_shape)
-  else: # NOTE faster gather, fixed number of kernels, but exceeds limited kernels for openpilot
-    return input.__getitem__(tuple([slice(None) if i != axis else indices for i in range(input.ndim)]))
+  if indices.numel() >= 9:
+    return input.__getitem__(
+        tuple(
+            slice(None) if i != axis else indices for i in range(input.ndim)))
+  input_sh = list(input.shape)
+  ret_shape = input_sh[:axis] + list(indices.shape) + input_sh[axis+1:]
+  if indices.ndim > 1: indices = indices.flatten()
+  indices = [int(safe_numpy(indices))] if indices.shape == () else [input_sh[axis]+int(x) if x<0 else int(x) for x in safe_numpy(indices)]
+  args = [[(0,x) if j != axis else (i,i+1) for j, x in enumerate(input_sh)] for i in indices]
+  return input.shrink(arg=tuple(args[0])).cat(*[input.shrink(arg=tuple(arg)) for arg in args[1:]], dim=axis).reshape(ret_shape)
 
 def GatherElements(input, indices, axis):
   indices = indices.sign().contiguous().__neg__().contiguous().relu() * input.shape[axis] + indices
@@ -419,12 +491,14 @@ def Round(X:Tensor): return _round(X, 0.5, "round_to_even")
 
 def Resize(X:Tensor, roi=None, scales=None, sizes=None, antialias=0, axes=None, coordinate_transformation_mode='half_pixel', cubic_coeff_a=-0.75, exclude_outside=0, extrapolation_value=0.0, keep_aspect_ratio_policy='stretch', mode='nearest', nearest_mode='round_prefer_floor'):
   def _nearest_gather(X: Tensor, x_out, y_out): return X[:,:,y_out,:][:,:,:,x_out]
+
   def _nearest_mode(x_resized: Tensor, nearest_mode: str, x_len):
     if nearest_mode == "round_prefer_floor": ret = _round(x_resized, 0.5, "round_down")
     elif nearest_mode == "round_prefer_ceil": ret = _round(x_resized, 0.5, "round_up")
     elif nearest_mode == "floor": ret = x_resized.floor()
     elif nearest_mode == "ceil": ret = x_resized.ceil()
     return ret.clip(0, x_len-1)
+
   def _coordinate_transformation(x_out, y_out, output_shape, scales_lol, roi=None):
     if coordinate_transformation_mode == "half_pixel":
       x_out = (x_out + 0.5)/Tensor(scales_lol[-1]) - 0.5 # TODO Tensor() because try (((Tensor([0,1,2,3,4,5])+0.5)/3.5 - 0.5)) with LLVM or METAL, inaccuacy.
@@ -445,9 +519,10 @@ def Resize(X:Tensor, roi=None, scales=None, sizes=None, antialias=0, axes=None, 
       x_out = roi[-1][0] * (X.shape[-1] - 1) + x_out * ((roi[-1][1] - roi[-1][0]) * (X.shape[-1] - 1) / (output_shape[-1] - 1))  if output_shape[-1] > 1 else Tensor([0.5 * (roi[-1][0] + roi[-1][1]) * (X.shape[-1] - 1)])
       y_out = roi[-2][0] * (X.shape[-2] - 1) + y_out * ((roi[-2][1] - roi[-2][0]) * (X.shape[-2] - 1) / (output_shape[-2] - 1))  if output_shape[-2] > 1 else Tensor([0.5 * (roi[-2][0] + roi[-2][1]) * (X.shape[-2] - 1)])
     return x_out.clip(0, X.shape[-1]-1), y_out.clip(0, X.shape[-2]-1)
+
   if roi is not None:
     roi = safe_numpy(roi)
-    roi = [(st,ed) for st, ed in zip(roi[:len(roi)//2], roi[len(roi)//2:])]
+    roi = list(zip(roi[:len(roi)//2], roi[len(roi)//2:]))
     roi_ = [(1,1)] * 4
     if axes is not None:
       for a,r in zip(axes, roi):
@@ -519,14 +594,13 @@ def CenterCropPad(input, shape, axes=None):
   for s, x in zip(shape, axes):
     if s < input.shape[x]: shrink_arg[x] = (input.shape[x]//2 - s//2, input.shape[x]//2 + s//2) if s%2 == 0 else (input.shape[x]//2 - s//2 - 1, input.shape[x]//2 + s//2)
     elif s > input.shape[x]: pad_arg[x] = ((s - input.shape[x])//2, (s - input.shape[x])//2)  if (s - input.shape[x])% 2 == 0 else ((s - input.shape[x])//2, (s - input.shape[x])//2 + 1)
-    else: pass
   return input.shrink(tuple(shrink_arg)).pad(tuple(pad_arg))
 
 def OneHot(indices, depth, values, axis=-1):
   depth = int(safe_numpy(depth).item())
   indices, rank = (indices < 0).where(indices+depth, indices), len(indices.shape)
   if axis < 0: axis += rank + 1
-  ls, rs = indices.shape[0:axis], indices.shape[axis: rank]
+  ls, rs = indices.shape[:axis], indices.shape[axis: rank]
   cond = indices[:,None] == Tensor.arange(depth).reshape((1,) * len(ls) + (depth,) + (1,) * len(rs))
   return cond.where(values[1], values[0]).cast(values.dtype)
 
@@ -543,7 +617,7 @@ def Erf(x):
   return sign * (1.0 - y * Tensor.exp(-x * x))
 
 def Compress(inp, condition, axis=None):
-  if axis == None:
+  if axis is None:
     inp = inp.flatten()
     axis = 0
 
@@ -551,7 +625,8 @@ def Compress(inp, condition, axis=None):
 
   con_np = condition.numpy()
   con = Tensor(np.arange(condition.shape[0])[con_np]) # no boolean indexing in Tensor
-  return inp.__getitem__(tuple([slice(None) if i != axis else con for i in range(inp.ndim)]))
+  return inp.__getitem__(
+      tuple(slice(None) if i != axis else con for i in range(inp.ndim)))
 
 def Acos(x):
   negate = (x < 0)
@@ -676,12 +751,11 @@ def Upsample(X, scales, mode):
 
 type_map = {TensorProto.DOUBLE: dtypes.double, TensorProto.FLOAT: dtypes.float32}
 def EyeLike(x, dtype=None, k=0):
-  if dtype is None: dtype = x.dtype
-  else: dtype = type_map[dtype]
+  dtype = x.dtype if dtype is None else type_map[dtype]
   shape = x.shape
   dim = min(x.shape)
-  if shape[0] == shape[1]: return Tensor.eye(dim=dim, dtype=dtype)
-  else:
-    diff = (shape[0]-dim, shape[1]-dim)
-    padarg = tuple([(d, d) if d == 0 else (k, d-k) for d in diff])
-    return Tensor.eye(dim=dim, dtype=dtype).pad(padarg)
+  if shape[0] == shape[1]:
+    if shape[0] == shape[1]: return Tensor.eye(dim=dim, dtype=dtype)
+  diff = (shape[0]-dim, shape[1]-dim)
+  padarg = tuple((d, d) if d == 0 else (k, d-k) for d in diff)
+  return Tensor.eye(dim=dim, dtype=dtype).pad(padarg)

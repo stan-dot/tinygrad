@@ -90,8 +90,8 @@ def benchmark_model(m, validate_outs=False):
   ort_options = ort.SessionOptions()
   ort_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
   ort_options.log_severity_level = 3  # no warnings
-  for backend in ["CPU", "CUDA" if not OSX else "CoreML"]:  # https://onnxruntime.ai/docs/execution-providers/
-    provider = backend+"ExecutionProvider"
+  for backend in ["CPU", "CUDA" if not OSX else "CoreML"]:# https://onnxruntime.ai/docs/execution-providers/
+    provider = f"{backend}ExecutionProvider"
     if provider not in ort.get_available_providers(): continue
     ort_sess = ort.InferenceSession(str(fn), ort_options, [provider])
     benchmark(m, f"onnxruntime_{backend.lower()}", lambda: ort_sess.run(output_names, np_inputs))
@@ -105,7 +105,7 @@ def benchmark_model(m, validate_outs=False):
 
     ort_sess = ort.InferenceSession(str(fn), ort_options, ["CPUExecutionProvider"])
     onnx_out = ort_sess.run(output_names, np_inputs)
-    onnx_out = dict([*[(name,x) for name, x in zip(output_names, onnx_out)]])
+    onnx_out = dict([*list(zip(output_names, onnx_out))])
 
     assert_allclose(tinygrad_out, onnx_out, rtol=rtol, atol=atol)
     print(f"{m:16s}outputs validated with rtol={rtol:.1e}, atol={atol:.1e}")
@@ -117,7 +117,7 @@ def benchmark_model(m, validate_outs=False):
 
 def assert_allclose(tiny_out:dict, onnx_out:dict, rtol=1e-5, atol=1e-5):
   assert len(tiny_out) == len(onnx_out) and tiny_out.keys() == onnx_out.keys()
-  for k in tiny_out.keys():
+  for k in tiny_out:
     tiny_v, onnx_v = tiny_out[k], onnx_out[k]
     if tiny_v is None: assert tiny_v == onnx_v
     else: np.testing.assert_allclose(tiny_v.numpy(), onnx_v, rtol=rtol, atol=atol, err_msg=f"For tensor '{k}' in {tiny_out.keys()}")

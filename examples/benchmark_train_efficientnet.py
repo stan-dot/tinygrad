@@ -51,12 +51,10 @@ if __name__ == "__main__":
       loss.realize()
       for p in parameters:
         p.realize()
-      et = time.monotonic()
     else:
       st = mt = time.monotonic()
       for prg, args in cl_cache: prg(*args)
-      et = time.monotonic()
-
+    et = time.monotonic()
     if i == 2 and CLCACHE:
       cl_cache = CacheCollector.finish()
 

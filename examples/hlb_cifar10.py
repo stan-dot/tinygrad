@@ -212,7 +212,9 @@ def train_cifar():
     lambda x: x.reshape((-1,3,32,32))
   ]
 
-  class modelEMA():
+
+
+  class modelEMA:
     def __init__(self, w, net):
       # self.model_ema = copy.deepcopy(net) # won't work for opencl due to unpickeable pyopencl._cl.Buffer
       self.net_ema = SpeedyResNet(w)
@@ -226,9 +228,11 @@ def train_cifar():
       Tensor.no_grad = True
       for net_ema_param, (param_name, net_param) in zip(get_state_dict(self.net_ema).values(), get_state_dict(net).items()):
         # batchnorm currently is not being tracked
-        if not ("num_batches_tracked" in param_name) and not ("running" in param_name):
+        if ("num_batches_tracked" not in param_name
+            and "running" not in param_name):
           net_ema_param.assign(net_ema_param.detach()*decay + net_param.detach()*(1.-decay)).realize()
       Tensor.no_grad = False
+
 
   set_seed(hyp['seed'])
 
@@ -308,6 +312,7 @@ def train_cifar():
     loss = cross_entropy(out, Y, reduction='mean')
     correct = out.argmax(axis=1) == Y.argmax(axis=1)
     return correct.realize(), loss.realize()
+
   eval_step_jitted     = TinyJit(eval_step)
   eval_step_ema_jitted = TinyJit(eval_step)
 
@@ -399,9 +404,7 @@ def train_cifar():
       i += 1
 
 if __name__ == "__main__":
-  if not getenv("DIST"):
-    train_cifar()
-  else: # distributed
+  if getenv("DIST"):
     from tinygrad.runtime.ops_gpu import CL
     devices = [f"gpu:{i}" for i in range(len(CL.devices))]
     world_size = len(devices)
@@ -415,8 +418,10 @@ if __name__ == "__main__":
     # init out-of-band communication
     dist.init_oob(world_size)
 
-    # start the processes
-    processes = []
-    for rank, device in enumerate(devices):
-      processes.append(dist.spawn(rank, device, fn=train_cifar, args=()))
+    processes = [
+        dist.spawn(rank, device, fn=train_cifar, args=())
+        for rank, device in enumerate(devices)
+    ]
     for p in processes: p.join()
+  else:
+    train_cifar()

@@ -56,12 +56,8 @@ class Normalize:
     self.to_bgr255 = to_bgr255
 
   def __call__(self, image):
-    if self.to_bgr255:
-      image = image[[2, 1, 0]] * 255
-    else:
-      image = image[[0, 1, 2]] * 255
-    image = Ft.normalize(image, mean=self.mean, std=self.std)
-    return image
+    image = image[[2, 1, 0]] * 255 if self.to_bgr255 else image[[0, 1, 2]] * 255
+    return Ft.normalize(image, mean=self.mean, std=self.std)
 
 transforms = lambda size_scale: T.Compose(
   [
@@ -121,11 +117,7 @@ def paste_mask_in_image(mask, box, im_h, im_w, thresh=0.5, padding=1):
   mask = F.interpolate(mask, size=(h, w), mode='bilinear', align_corners=False)
   mask = mask[0][0]
 
-  if thresh >= 0:
-    mask = mask > thresh
-  else:
-    mask = (mask * 255).to(torch.uint8)
-
+  mask = mask > thresh if thresh >= 0 else (mask * 255).to(torch.uint8)
   im_mask = torch.zeros((im_h, im_w), dtype=torch.uint8)
   x_0 = max(box[0], 0)
   x_1 = min(box[2] + 1, im_w)
@@ -150,7 +142,7 @@ class Masker:
       paste_mask_in_image(mask[0], box, im_h, im_w, self.threshold, self.padding)
       for mask, box in zip(masks, boxes.bbox)
     ]
-    if len(res) > 0:
+    if res:
       res = torch.stack(res, dim=0)[:, None]
     else:
       res = masks.new_empty((0, 1, masks.shape[-2], masks.shape[-1]))
@@ -190,9 +182,7 @@ def compute_prediction(original_image, model, confidence_threshold, size_scale=1
   return prediction
 
 def compute_prediction_batched(batch, model, size_scale=1.0):
-  imgs = []
-  for img in batch:
-    imgs.append(transforms(size_scale)(img).numpy())
+  imgs = [transforms(size_scale)(img).numpy() for img in batch]
   image = [Tensor(image, requires_grad=False) for image in imgs]
   predictions = model(image)
   del image
@@ -227,9 +217,7 @@ def overlay_mask(image, predictions):
     )
     image = cv2.drawContours(image, contours, -1, color, 3)
 
-  composite = image
-
-  return composite
+  return image
 
 CATEGORIES = [
     "__background", "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",

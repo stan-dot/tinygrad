@@ -24,8 +24,8 @@ class Function:
   def backward(self, *args, **kwargs): raise RuntimeError(f"backward not implemented for {type(self)}")
 
   @classmethod
-  def apply(fxn:Type[Function], *x:Tensor, **kwargs) -> Tensor:
-    ctx = fxn(x[0].device, *x)
+  def apply(cls, *x: Tensor, **kwargs) -> Tensor:
+    ctx = cls(x[0].device, *x)
     ret = Tensor(ctx.forward(*[t.lazydata for t in x], **kwargs), device=ctx.device, requires_grad=ctx.requires_grad)
     if ctx.requires_grad and not Tensor.no_grad: ret._ctx = ctx    # used by autograd engine
     return ret
@@ -159,7 +159,10 @@ class Tensor:
     return Tensor.full((math.ceil((stop-start)/step),), step, **kwargs).cumsum() + (start - step)
 
   @staticmethod
-  def eye(dim:int, **kwargs): return Tensor.full((dim,1),1,**kwargs).pad(((0,0),(0,dim))).reshape(dim*(dim+1)).shrink(((0,dim*dim),)).reshape(dim, dim)
+  def eye(dim:int, **kwargs):
+    return (Tensor.full((dim, 1), 1, **kwargs).pad(
+        ((0, 0), (0, dim))).reshape(dim * (dim + 1)).shrink(
+            ((0, dim**2), )).reshape(dim, dim))
 
   def full_like(self, fill_value, **kwargs):
     return Tensor.full(self.shape, fill_value=fill_value, dtype=kwargs.pop("dtype", self.dtype), device=kwargs.pop("device", self.device), **kwargs)
@@ -234,14 +237,24 @@ class Tensor:
   def reshape(self, shape, *args) -> Tensor:
     new_shape = argfix(shape, *args)
     assert 0 not in new_shape, f"zeros not allowed in shape {new_shape}"
-    return mlops.Reshape.apply(self, shape=tuple([-prod(self.shape) // prod(new_shape) if s == -1 else s for s in new_shape]))
-  def expand(self, shape, *args) -> Tensor: return mlops.Expand.apply(self, shape=tuple([x if x != -1 else s for s,x in zip(self.shape, argfix(shape, *args))]))
+    return mlops.Reshape.apply(
+        self,
+        shape=tuple(-prod(self.shape) // prod(new_shape) if s == -1 else s
+                    for s in new_shape),
+    )
+  def expand(self, shape, *args) -> Tensor:
+    return mlops.Expand.apply(
+        self,
+        shape=tuple(x if x != -1 else s
+                    for s, x in zip(self.shape, argfix(shape, *args))),
+    )
   def permute(self, order, *args) -> Tensor: return mlops.Permute.apply(self, order=argfix(order, *args))
   def flip(self, axis, *args) -> Tensor: return mlops.Flip.apply(self, axis=[x if x >= 0 else x+len(self.shape) for x in argfix(axis, *args)])
   def shrink(self, arg:Tuple[Tuple[sint, sint], ...]) -> Tensor: return mlops.Shrink.apply(self, arg=arg) if any(x != (0,s) for x,s in zip(arg, self.shape)) else self
   def pad(self, arg: Tuple[Tuple[int, int], ...], value:float=0) -> Tensor:
     ret = mlops.Pad.apply(self, arg=arg) if any(x != (0, 0) for x in arg) else self
-    return ret if 0 == value else ret + mlops.Pad.apply(Tensor.ones_like(self), arg=arg).where(0, value)
+    return (ret if value == 0 else ret +
+            mlops.Pad.apply(Tensor.ones_like(self), arg=arg).where(0, value))
 
   # ***** movement hlops *****
 
@@ -338,9 +351,12 @@ class Tensor:
 
   # NOTE: using slice is discouraged and things should migrate to pad and shrink
   def slice(self, arg:Sequence[Optional[Tuple[int, sint]]], value:float=0) -> Tensor:
-    arg_ = tuple([a if a is not None else (0,s) for s,a in zip(self.shape, arg)])
-    padding = tuple([(max(0, -p[0]), max(0, p[1]-self.shape[i])) for i,p in enumerate(arg_)])
-    return self.pad(padding, value=value).shrink(tuple([(p[0] + padding[i][0], p[1] + padding[i][0]) for i,p in enumerate(arg_)]))
+    arg_ = tuple(a if a is not None else (0,s) for s,a in zip(self.shape, arg))
+    padding = tuple((max(0, -p[0]), max(0, p[1] - self.shape[i]))
+                    for i, p in enumerate(arg_))
+    return self.pad(padding, value=value).shrink(
+        tuple((p[0] + padding[i][0], p[1] + padding[i][0])
+              for i, p in enumerate(arg_)))
 
   def gather(self: Tensor, idx: Tensor, dim: int):
     assert idx.ndim == self.ndim, "self.ndim must equal idx.ndim"
@@ -349,7 +365,14 @@ class Tensor:
     idx = idx.transpose(ax1=dim, ax2=0).unsqueeze(-1)
     permarg = list(range(self.ndim))
     permarg = permarg[1:dim] + [permarg[0]] + permarg[dim+1:] + [permarg[dim]] if dim != 0 else permarg[1:] + [permarg[0]]
-    return ((idx == Tensor.arange(self.shape[dim], dtype=dtypes.int32, requires_grad=False, device=self.device)) * self.permute(*permarg).shrink(tuple([*[(0,sh) for sh in idx.shape[1:-1]], (0,self.shape[dim])])).unsqueeze(0)).sum(-1).transpose(ax1=0, ax2=dim)
+    return (((idx == Tensor.arange(
+        self.shape[dim],
+        dtype=dtypes.int32,
+        requires_grad=False,
+        device=self.device,
+    )) * self.permute(*permarg).shrink(
+        (*[(0, sh) for sh in idx.shape[1:-1]],
+         (0, self.shape[dim]))).unsqueeze(0)).sum(-1).transpose(ax1=0, ax2=dim))
 
   def cat(self, *args, dim=0):
     dim = (dim + len(self.shape)) if dim < 0 else dim
@@ -413,7 +436,11 @@ class Tensor:
     axis_: List[int] = list(range(len(self.shape))) if axis is None else ([axis] if axis.__class__ is int else list(axis)) # type: ignore
     axis_ = [x if x >= 0 else x+len(self.shape) for x in axis_]
     shape = [s for i,s in enumerate(self.shape) if i not in axis_]
-    ret = fxn.apply(self, new_shape=tuple([1 if i in axis_ else s for i,s in enumerate(self.shape)]))
+    ret = fxn.apply(
+        self,
+        new_shape=tuple(1 if i in axis_ else s
+                        for i, s in enumerate(self.shape)),
+    )
     return ret if keepdim else ret.reshape(shape=shape)
 
   def sum(self, axis=None, keepdim=False): return self._reduce(mlops.Sum, axis, keepdim)
@@ -458,7 +485,11 @@ class Tensor:
     assert all_int(self.shape), f"does not support symbolic shape {self.shape}"
     s_, d_ = make_pair(stride, len(k_)), make_pair(dilation, len(k_))
     assert len(k_) == len(s_) and len(k_) == len(d_), f"stride/dilation mismatch kernel:{k_} stride:{s_} dilation:{d_}"
-    slc_prefix, prefix, i_ = [(0,x) for x in self.shape[0:-len(k_)]], self.shape[0:-len(k_)], self.shape[-len(k_):]
+    slc_prefix, prefix, i_ = (
+        [(0, x) for x in self.shape[:-len(k_)]],
+        self.shape[:-len(k_)],
+        self.shape[-len(k_):],
+    )
     if any(k > s for k,s in zip(k_, s_)) or any(d != 1 for d in d_):
       o_ = [(i - d * (k-1) - 1)//s + 1 for i,d,k,s in zip(i_, d_, k_, s_)]
       e_ = [math.ceil(k*(i+d) / i) for k,i,d in zip(k_, i_, d_)]  # expands such that we don't need padding
@@ -499,13 +530,18 @@ class Tensor:
   def conv2d(self, weight:Tensor, bias:Optional[Tensor]=None, groups=1, stride=1, dilation=1, padding=0) -> Tensor:
     (bs,cin_), (cout,cin), HW = self.shape[:2], weight.shape[:2], weight.shape[2:]
     assert groups*cin == cin_ and len(self.shape) == len(weight.shape), f"Input Tensor shape {self.shape} does not match the shape of the weights {weight.shape}. ({groups*cin} vs. {cin_})"
-    if isinstance(padding, (tuple,list)): assert len(padding) == 2*len(HW) or len(padding) == len(HW), f"Expected padding of length {2*len(HW)} or {len(HW)}, but got {len(padding)} for tensor of shape {self.shape}"
+    if isinstance(padding, (tuple,list)):
+      assert len(padding) in [
+          2 * len(HW),
+          len(HW),
+      ], f"Expected padding of length {2 * len(HW)} or {len(HW)}, but got {len(padding)} for tensor of shape {self.shape}"
     padding_ = [padding]*2*len(HW) if isinstance(padding, int) else (padding if len(padding) == 2*len(HW) else [p for p in padding for _ in range(2)][::-1])
 
     # conv2d is a pooling op (with padding)
     x = self.pad2d(padding_)._pool(HW, stride, dilation)   # (bs, groups*cin, oy, ox, H, W)
     rcout, oyx = cout//groups, x.shape[2:-len(HW)]
-    if not all(x == 3 for x in HW) or stride != 1 or dilation != 1 or not Tensor.wino:
+    if (any(x != 3 for x in HW) or stride != 1 or dilation != 1
+        or not Tensor.wino):
       # normal conv
       x = x.reshape(bs, groups, cin, 1, *oyx, *HW).expand(bs, groups, cin, rcout, *oyx, *HW).permute(0,1,3,*[4+i for i in range(len(oyx))],2,*[4+len(oyx)+i for i in range(len(HW))])
 
@@ -515,6 +551,7 @@ class Tensor:
 
     # winograd conv 3 kernel f(4x4,3x3) see: http://arxiv.org/abs/1509.09308
     def apply_matrix(mat, t, dim=0): return t if dim == len(HW) else Tensor.stack([apply_matrix(mat, sum(mat[i][j] * t[j] for j in range(len(mat[i])) if mat[i][j]), dim=dim+1) for i in range(len(mat))])
+
     HWI, HWO = (6,) * len(HW), (4,) * len(HW)  # F(4x4,3x3) winograd tiles
     winograd_Bt = [[4, 0, -5, 0, 1, 0], [0, -4, -4, 1, 1, 0], [0, 4, -4, -1, 1, 0], [0, -2, -1, 2, 1, 0], [0, 2, -1, -2, 1, 0], [0, 4, 0, -5, 0, 1]]
     winograd_G = [[1/4, 0, 0], [-1/6, -1/6, -1/6], [-1/6, 1/6, -1/6], [1/24, 1/12, 1/6], [1/24, -1/12, 1/6], [0, 0, 1]]
@@ -522,7 +559,15 @@ class Tensor:
 
     # todo: stride == dilation
     # use padding to round up to 4x4 output tiles
-    d = self.pad2d(sum([[padding_[i*2], padding_[i*2+1] + (-(dim + sum(padding_[i * 2:(i + 1) * 2]) - 2) % 4)] for i, dim in enumerate(self.shape[-len(HW):])], []))._pool(HWI, HWO)  # (bs, cin_, tyx, HWI)
+    d = self.pad2d(
+        sum(
+            ([
+                padding_[i * 2],
+                padding_[i * 2 + 1] +
+                (-(dim + sum(padding_[i * 2:(i + 1) * 2]) - 2) % 4),
+            ] for i, dim in enumerate(self.shape[-len(HW):])),
+            [],
+        ))._pool(HWI, HWO)
     d = d.permute(*range(len(d.shape)-len(HW),len(d.shape)), *range(len(d.shape)-len(HW))).contiguous_backward()  # move HW to the front: # (HWI, bs, cin_, tyx)
     tyx = d.shape[-len(HWI):]  # dim of tiling
 
@@ -543,8 +588,9 @@ class Tensor:
     n1, n2 = len(self.shape), len(w.shape)
     assert n1 != 0 and n2 != 0, f"both arguments to matmul need to be at least 1D, but they are {n1}D and {n2}D"
     assert self.shape[-1] == w.shape[-min(n2, 2)], f"Input Tensor shapes {self.shape} and {w.shape} cannot be multiplied ({self.shape[-1]} != {w.shape[-min(n2, 2)]})"
-    x = self.reshape(*self.shape[0:-1], *[1]*min(n1-1, n2-1, 1), self.shape[-1])
-    w = w.reshape(*w.shape[0:-2], *[1]*min(n1-1, n2-1, 1), *w.shape[-min(n2, 2):]).transpose(-1, -min(n2, 2))
+    x = self.reshape(*self.shape[:-1], *[1]*min(n1-1, n2-1, 1), self.shape[-1])
+    w = w.reshape(*w.shape[:-2], *[1] * min(n1 - 1, n2 - 1, 1),
+                  *w.shape[-min(n2, 2):]).transpose(-1, -min(n2, 2))
     return (x*w).sum(-1)
 
   def cumsum(self, axis:int=0) -> Tensor: return self.transpose(axis,-1).pad2d((self.shape[axis]-1,0))._pool((self.shape[axis],)).sum(-1).transpose(axis,-1)
@@ -615,7 +661,7 @@ class Tensor:
     elif shape_delta < 0: x = x.reshape((1,) * -shape_delta + xshape)
     if (xshape:=x.shape) == (yshape:=y.shape): return (x, y)
 
-    shape_ret = tuple([max(x, y) for x, y in zip(xshape, yshape)])
+    shape_ret = tuple(max(x, y) for x, y in zip(xshape, yshape))
     if xshape != shape_ret: x = x.expand(shape_ret)
     if yshape != shape_ret: y = y.expand(shape_ret)
     return (x, y)

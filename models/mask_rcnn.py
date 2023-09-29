@@ -62,7 +62,7 @@ def npgather(array,indices):
 
 def get_strides(shape):
   prod = [1]
-  for idx in range(len(shape)-1, -1, -1): prod.append(prod[-1] * shape[idx])
+  prod.extend(prod[-1] * shape[idx] for idx in range(len(shape)-1, -1, -1))
   # something about ints is broken with gpu, cuda
   return Tensor(prod[::-1][1:], dtype=dtypes.int32).unsqueeze(0).cpu()
 
@@ -119,14 +119,10 @@ class BoxList:
     if not isinstance(bbox, Tensor):
       bbox = Tensor(bbox)
     if bbox.ndim != 2:
-      raise ValueError(
-        "bbox should have 2 dimensions, got {}".format(bbox.ndim)
-      )
+      raise ValueError(f"bbox should have 2 dimensions, got {bbox.ndim}")
     if bbox.shape[-1] != 4:
       raise ValueError(
-        "last dimenion of bbox should have a "
-        "size of 4, got {}".format(bbox.shape[-1])
-      )
+          f"last dimenion of bbox should have a size of 4, got {bbox.shape[-1]}")
     if mode not in ("xyxy", "xywh"):
       raise ValueError("mode should be 'xyxy' or 'xywh'")
 
@@ -136,20 +132,20 @@ class BoxList:
     self.extra_fields = {}
 
   def __repr__(self):
-    s = self.__class__.__name__ + "("
-    s += "num_boxes={}, ".format(len(self))
-    s += "image_width={}, ".format(self.size[0])
-    s += "image_height={}, ".format(self.size[1])
-    s += "mode={})".format(self.mode)
+    s = f"{self.__class__.__name__}("
+    s += f"num_boxes={len(self)}, "
+    s += f"image_width={self.size[0]}, "
+    s += f"image_height={self.size[1]}, "
+    s += f"mode={self.mode})"
     return s
 
   def area(self):
     box = self.bbox
-    if self.mode == "xyxy":
+    if self.mode == "xywh":
+      area = box[:, 2] * box[:, 3]
+    elif self.mode == "xyxy":
       TO_REMOVE = 1
       area = (box[:, 2] - box[:, 0] + TO_REMOVE) * (box[:, 3] - box[:, 1] + TO_REMOVE)
-    elif self.mode == "xywh":
-      area = box[:, 2] * box[:, 3]
     return area
 
   def add_field(self, field, field_data):
@@ -174,13 +170,12 @@ class BoxList:
     xmin, ymin, xmax, ymax = self._split_into_xyxy()
     if mode == "xyxy":
       bbox = Tensor.cat(*(xmin, ymin, xmax, ymax), dim=-1)
-      bbox = BoxList(bbox, self.size, mode=mode)
     else:
       TO_REMOVE = 1
       bbox = Tensor.cat(
         *(xmin, ymin, xmax - xmin + TO_REMOVE, ymax - ymin + TO_REMOVE), dim=-1
       )
-      bbox = BoxList(bbox, self.size, mode=mode)
+    bbox = BoxList(bbox, self.size, mode=mode)
     bbox._copy_extra_fields(self)
     return bbox
 
@@ -286,14 +281,14 @@ def cat_boxlist(bboxes):
   fields = set(bboxes[0].fields())
   cat_box_list = [bbox.bbox for bbox in bboxes if bbox.bbox.shape[0] > 0]
 
-  if len(cat_box_list) > 0:
+  if cat_box_list:
     cat_boxes = BoxList(Tensor.cat(*cat_box_list, dim=0), size, mode)
   else:
     cat_boxes = BoxList(bboxes[0].bbox, size, mode)
   for field in fields:
     cat_field_list = [bbox.get_field(field) for bbox in bboxes if bbox.get_field(field).shape[0] > 0]
 
-    if len(cat_box_list) > 0:
+    if cat_box_list:
       data = Tensor.cat(*cat_field_list, dim=0)
     else:
       data = bboxes[0].get_field(field)
@@ -313,8 +308,7 @@ class FPN:
 
   def __call__(self, x: Tensor):
     last_inner = self.inner_blocks[-1](x[-1])
-    results = []
-    results.append(self.layer_blocks[-1](last_inner))
+    results = [self.layer_blocks[-1](last_inner)]
     for feature, inner_block, layer_block in zip(
             x[:-1][::-1], self.inner_blocks[:-1][::-1], self.layer_blocks[:-1][::-1]
     ):
@@ -362,10 +356,7 @@ class AnchorGenerator:
       cell_anchors = [
         generate_anchors(anchor_stride, sizes, aspect_ratios)
       ]
-    else:
-      if len(anchor_strides) != len(sizes):
-        raise RuntimeError("FPN should have #anchor_strides == #sizes")
-
+    elif len(anchor_strides) == len(sizes):
       cell_anchors = [
         generate_anchors(
           anchor_stride,
@@ -374,6 +365,9 @@ class AnchorGenerator:
         )
         for anchor_stride, size in zip(anchor_strides, sizes)
       ]
+    else:
+      raise RuntimeError("FPN should have #anchor_strides == #sizes")
+
     self.strides = anchor_strides
     self.cell_anchors = cell_anchors
     self.straddle_thresh = straddle_thresh
@@ -462,13 +456,13 @@ def _whctrs(anchor):
 def _mkanchors(ws, hs, x_ctr, y_ctr):
   ws = ws[:, None]
   hs = hs[:, None]
-  anchors = Tensor.cat(*(
-    x_ctr - 0.5 * (ws - 1),
-    y_ctr - 0.5 * (hs - 1),
-    x_ctr + 0.5 * (ws - 1),
-    y_ctr + 0.5 * (hs - 1),
-  ), dim=1)
-  return anchors
+  return Tensor.cat(*(
+      x_ctr - 0.5 * (ws - 1),
+      y_ctr - 0.5 * (hs - 1),
+      x_ctr + 0.5 * (ws - 1),
+      y_ctr + 0.5 * (hs - 1),
+  ),
+                    dim=1)
 
 
 def _ratio_enum(anchor, ratios):
@@ -477,16 +471,14 @@ def _ratio_enum(anchor, ratios):
   size_ratios = size / ratios
   ws = rint(Tensor.sqrt(size_ratios))
   hs = rint(ws * ratios)
-  anchors = _mkanchors(ws, hs, x_ctr, y_ctr)
-  return anchors
+  return _mkanchors(ws, hs, x_ctr, y_ctr)
 
 
 def _scale_enum(anchor, scales):
   w, h, x_ctr, y_ctr = _whctrs(anchor)
   ws = w * scales
   hs = h * scales
-  anchors = _mkanchors(ws, hs, x_ctr, y_ctr)
-  return anchors
+  return _mkanchors(ws, hs, x_ctr, y_ctr)
 
 
 class RPNHead:
@@ -528,8 +520,7 @@ class BoxCoder(object):
     targets_dw = ww * Tensor.log(gt_widths / ex_widths)
     targets_dh = wh * Tensor.log(gt_heights / ex_heights)
 
-    targets = Tensor.stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
-    return targets
+    return Tensor.stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
 
   def decode(self, rel_codes, boxes):
     boxes = boxes.cast(rel_codes.dtype)
@@ -559,8 +550,9 @@ class BoxCoder(object):
     y = pred_ctr_y - 0.5 * pred_h
     w = pred_ctr_x + 0.5 * pred_w - 1
     h = pred_ctr_y + 0.5 * pred_h - 1
-    pred_boxes = Tensor.stack([x, y, w, h]).permute(1,2,0).reshape(rel_codes.shape[0], rel_codes.shape[1])
-    return pred_boxes
+    return (Tensor.stack([x, y, w,
+                          h]).permute(1, 2, 0).reshape(rel_codes.shape[0],
+                                                       rel_codes.shape[1]))
 
 
 def boxlist_nms(boxlist, nms_thresh, max_proposals=-1, score_field="scores"):
@@ -660,12 +652,12 @@ class RPNPostProcessor:
     return result
 
   def __call__(self, anchors, objectness, box_regression):
-    sampled_boxes = []
     num_levels = len(objectness)
     anchors = list(zip(*anchors))
-    for a, o, b in zip(anchors, objectness, box_regression):
-      sampled_boxes.append(self.forward_for_single_feature_map(a, o, b))
-
+    sampled_boxes = [
+        self.forward_for_single_feature_map(a, o, b)
+        for a, o, b in zip(anchors, objectness, box_regression)
+    ]
     boxlists = list(zip(*sampled_boxes))
     boxlists = [cat_boxlist(boxlist) for boxlist in boxlists]
 
@@ -720,16 +712,15 @@ def make_conv3x3(
   stride=1,
   use_gn=False,
 ):
-  conv = nn.Conv2d(
-    in_channels,
-    out_channels,
-    kernel_size=3,
-    stride=stride,
-    padding=dilation,
-    dilation=dilation,
-    bias=False if use_gn else True
+  return nn.Conv2d(
+      in_channels,
+      out_channels,
+      kernel_size=3,
+      stride=stride,
+      padding=dilation,
+      dilation=dilation,
+      bias=not use_gn,
   )
-  return conv
 
 
 class MaskRCNNFPNFeatureExtractor:
@@ -932,10 +923,15 @@ class ROIAlign:
     self.sampling_ratio = sampling_ratio
 
   def __call__(self, input, rois):
-    output = _roi_align(
-      input, rois, self.spatial_scale, self.output_size[0], self.output_size[1], self.sampling_ratio, aligned=False
+    return _roi_align(
+        input,
+        rois,
+        self.spatial_scale,
+        self.output_size[0],
+        self.output_size[1],
+        self.sampling_ratio,
+        aligned=False,
     )
-    return output
 
 
 class LevelMapper:
@@ -958,13 +954,10 @@ class Pooler:
     self.output_size = output_size
     self.scales = scales
     self.sampling_ratio = sampling_ratio
-    poolers = []
-    for scale in scales:
-      poolers.append(
-        ROIAlign(
-          output_size, spatial_scale=scale, sampling_ratio=sampling_ratio
-        )
-      )
+    poolers = [
+        ROIAlign(output_size, spatial_scale=scale, sampling_ratio=sampling_ratio)
+        for scale in scales
+    ]
     self.poolers = poolers
     self.output_size = output_size
     lvl_min = -math.log2(scales[0])
@@ -982,13 +975,11 @@ class Pooler:
       dim=0,
     )
     if concat_boxes.shape[0] != 0:
-      rois = Tensor.cat(*[ids, concat_boxes], dim=1)
-      return rois
+      return Tensor.cat(*[ids, concat_boxes], dim=1)
 
   def __call__(self, x, boxes):
     num_levels = len(self.poolers)
-    rois = self.convert_to_roi_format(boxes)
-    if rois:
+    if rois := self.convert_to_roi_format(boxes):
       if num_levels == 1:
         return self.poolers[0](x[0], rois)
 
@@ -1004,7 +995,13 @@ class Pooler:
           all_idxs.extend(idx_in_level)
           results.append(pooler_output)
 
-      return tensor_gather(Tensor.cat(*results), [x[0] for x in sorted({i:idx for i, idx in enumerate(all_idxs)}.items(), key=lambda x: x[1])])
+      return tensor_gather(
+          Tensor.cat(*results),
+          [
+              x[0] for x in sorted(dict(enumerate(all_idxs)).items(),
+                                   key=lambda x: x[1])
+          ],
+      )
 
 
 class FPNPredictor:
@@ -1229,7 +1226,7 @@ def to_image_list(tensors, size_divisible=32):
 
     return ImageList(batched_imgs, image_sizes)
   else:
-    raise TypeError("Unsupported type for to_image_list: {}".format(type(tensors)))
+    raise TypeError(f"Unsupported type for to_image_list: {type(tensors)}")
 
 
 class MaskRCNN:

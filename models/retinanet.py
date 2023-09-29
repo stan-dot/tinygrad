@@ -168,8 +168,7 @@ class RetinaHead:
     self.regression_head = RegressionHead(in_channels, num_anchors)
   def __call__(self, x):
     pred_bbox, pred_class = self.regression_head(x), self.classification_head(x)
-    out = pred_bbox.cat(pred_class, dim=-1)
-    return out
+    return pred_bbox.cat(pred_class, dim=-1)
 
 class ResNetFPN:
   def __init__(self, resnet, out_channels=256, returned_layers=[2, 3, 4]):

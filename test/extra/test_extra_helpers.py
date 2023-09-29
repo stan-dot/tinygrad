@@ -13,8 +13,7 @@ class TestEarlyExec(unittest.TestCase):
       temp.write(file_content)
       temp_path = temp.name
     try:
-      output = self.early_exec((["python3", temp_path] + exec_args, None))
-      return output
+      return self.early_exec((["python3", temp_path] + exec_args, None))
     finally:
       os.remove(temp_path)
 
@@ -38,7 +37,8 @@ class TestCrossProcess(unittest.TestCase):
 
   def test_cross_process(self):
     def _iterate():
-      for i in range(10): yield i
+      yield from range(10)
+
     results = list(cross_process(_iterate))
     self.assertEqual(list(range(10)), results)
 

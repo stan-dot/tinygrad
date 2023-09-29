@@ -45,8 +45,12 @@ class OptimizedKernel(Kernel):
     move_axis = axis if top else axis+1
     if move_axis < insert_before: insert_before += 1
     self.reshape_and_permute(
-      lambda x: list(x[0:axis]) + (([amount, x[axis]//amount] if top else [x[axis]//amount, amount]) if x[axis] > 1 else [1,1]) + list(x[axis+1:]),
-      [i for i in range(insert_before) if i != move_axis] + [move_axis] + [i for i in range(insert_before, self.shape_len+1) if i != move_axis])
+        lambda x: list(x[:axis]) + (
+            ([amount, x[axis] // amount] if top else [x[axis] // amount, amount])
+            if x[axis] > 1 else [1, 1]) + list(x[axis + 1:]),
+        [i for i in range(insert_before) if i != move_axis] + [move_axis] +
+        [i for i in range(insert_before, self.shape_len + 1) if i != move_axis],
+    )
 
   # ******************** complex simplifiers ********************
 
@@ -68,10 +72,13 @@ class OptimizedKernel(Kernel):
     # TODO: move this into shapetracker, with tests!
     rets = [[(shapes[j][0], strides[j][0])] for j in range(len(shapes))]
     for i in range(1, len(shapes[0])):
-      can_merge = []
-      for j in range(len(shapes)):
-        # TODO: added the always mergeability of 1s, is this right? if so, add to shapetracker in the 1 case
-        can_merge.append(strides[j][i] is not None and ((strides[j][i] != 0 and rets[j][-1][1] == shapes[j][i]*cast(int, strides[j][i])) or (strides[j][i] == 0 and rets[j][-1][1] == 0)))
+      can_merge = [
+          (strides[j][i] is not None and
+           ((strides[j][i] != 0
+             and rets[j][-1][1] == shapes[j][i] * cast(int, strides[j][i])) or
+            (strides[j][i] == 0 and rets[j][-1][1] == 0)))
+          for j in range(len(shapes))
+      ]
       # more can merge than this
       mergeable = all(can_merge) and i != self.first_reduce
       for j in range(len(shapes)):
@@ -79,7 +86,8 @@ class OptimizedKernel(Kernel):
         else: rets[j].append((shapes[j][i], strides[j][i]))
 
     # do the reshapes
-    for i,x in enumerate(rets): self.sts[i] = self.sts[i].reshape(tuple([y[0] for y in x]))
+    for i,x in enumerate(rets):
+      self.sts[i] = self.sts[i].reshape(tuple(y[0] for y in x))
 
   # ******************** GPU simplifiers ********************
   def _limit_size(self, x: Tuple[int], max_size: List) -> Tuple[int, ...]:
@@ -88,11 +96,9 @@ class OptimizedKernel(Kernel):
       next_idx = (i + 1) % dims
       while new_shape[i] > max_size[i]:
         new_shape[i] = new_shape[i] // 2
-        if (new_shape[next_idx] <= max_size[next_idx]):
-          new_shape[next_idx] = new_shape[next_idx] * 2
-        else:
+        if new_shape[next_idx] > max_size[next_idx]:
           next_idx = (next_idx + 1) % dims
-          new_shape[next_idx] = new_shape[next_idx] * 2
+        new_shape[next_idx] = new_shape[next_idx] * 2
     return tuple(new_shape)
 
   def limit_dims_to_max(self, global_max: List[int], local_max: List[int]):
@@ -154,7 +160,8 @@ class OptimizedKernel(Kernel):
     for buf_index,buf in enumerate(self.bufs):
       unit_stride_axes_mul_4 = [i for i in self.sts[buf_index].unit_stride_axes(ignore_valid=True) if self.sts[buf_index].shape[i]%4 == 0]
       if (not early_only or buf in self.earlybufs) and self.bufs[buf_index].dtype.__class__ is ImageDType:
-        assert len(unit_stride_axes_mul_4) >= 1, f"needs a unit stride axis in {self.bufs[buf_index]}"
+        assert (unit_stride_axes_mul_4
+                ), f"needs a unit stride axis in {self.bufs[buf_index]}"
         if all(x < (self.shape_len-self.upcasted) for x in unit_stride_axes_mul_4) and unit_stride_axes_mul_4[0] not in self.upcast_in_mid_reduce_axes:
           self.shift_to(unit_stride_axes_mul_4[0], 4)
           self.upcast()
@@ -170,10 +177,10 @@ class OptimizedKernel(Kernel):
 
     # should use HIP tensor cores?
     if getenv("TC", 1) != 0 and self.opts.device == "HIP" and self.reduceop and self.reduceop.op == ReduceOps.SUM and \
-        isinstance(self.reduceop.src[0], LazyOp) and self.reduceop.src[0].op == UnaryOps.CAST and \
-        isinstance(self.reduceop.src[0].src[0], LazyOp) and self.reduceop.src[0].src[0].op == BinaryOps.MUL and \
-        self.reduceop.src[0].src[0].src[0].op == BufferOps.MEM and self.reduceop.src[0].src[0].src[1].op == BufferOps.MEM and self.opts.has_local and \
-        cast(LazyOp, self.reduceop.src[0].src[0].src[0]).arg.dtype == dtypes.half and cast(LazyOp, self.reduceop.src[0].src[0].src[1]).arg.dtype == dtypes.half:
+          isinstance(self.reduceop.src[0], LazyOp) and self.reduceop.src[0].op == UnaryOps.CAST and \
+          isinstance(self.reduceop.src[0].src[0], LazyOp) and self.reduceop.src[0].src[0].op == BinaryOps.MUL and \
+          self.reduceop.src[0].src[0].src[0].op == BufferOps.MEM and self.reduceop.src[0].src[0].src[1].op == BufferOps.MEM and self.opts.has_local and \
+          cast(LazyOp, self.reduceop.src[0].src[0].src[0]).arg.dtype == dtypes.half and cast(LazyOp, self.reduceop.src[0].src[0].src[1]).arg.dtype == dtypes.half:
       # HIP tensor cores are 16x16x16
       buf0 = self.bufs.index(cast(LazyOp, self.reduceop.src[0].src[0].src[0]).arg)
       buf1 = self.bufs.index(cast(LazyOp, self.reduceop.src[0].src[0].src[1]).arg)
@@ -231,8 +238,8 @@ class OptimizedKernel(Kernel):
     # first, confirm it's a straightforward mulacc on a device with real locals
     tensor_cores_allowed = getenv("TC", 1) != 0 and (getenv("TC", 1) == 2 or (self.opts.device == "METAL" and os.uname().machine == "arm64"))
     if tensor_cores_allowed and self.reduceop and self.reduceop.op == ReduceOps.SUM and \
-        isinstance(self.reduceop.src[0], LazyOp) and self.reduceop.src[0].op == BinaryOps.MUL and \
-        self.reduceop.src[0].src[0].op == BufferOps.MEM and self.reduceop.src[0].src[1].op == BufferOps.MEM and self.opts.has_local:
+          isinstance(self.reduceop.src[0], LazyOp) and self.reduceop.src[0].op == BinaryOps.MUL and \
+          self.reduceop.src[0].src[0].op == BufferOps.MEM and self.reduceop.src[0].src[1].op == BufferOps.MEM and self.opts.has_local:
       # METAL tensor cores are 8x8x8, with 2 elements per thread in the 32 thread warp
       buf0 = self.bufs.index(cast(LazyOp, self.reduceop.src[0].src[0]).arg)
       buf1 = self.bufs.index(cast(LazyOp, self.reduceop.src[0].src[1]).arg)
@@ -359,21 +366,27 @@ class OptimizedKernel(Kernel):
     # potentially do more upcasts of non reduce axes based on a heuristic
     upcasted_axis = set()
     while prod(self.sts[0].shape[:self.first_reduce]) >= 1024:
-      xb_choices = []
-      for axis, upcast_amount in itertools.product(range(self.first_reduce), [3,4]):   # consider all the non reduce axes, and a 3 or 4 reduce
-        # if we haven't upcasted it, it's not symbolic, it mods, and some buffer has stride 0 on axis while having no stride 0 in the upcasted axis already
-        if axis not in upcasted_axis and isinstance(self.full_shape[axis], int) and self.full_shape[axis]%upcast_amount == 0 and any(st.views[-1].strides[axis] == 0 and not any(x[1] == 0 for x in self.upcasted_axis(buf_index)) for buf_index, st in enumerate(self.sts)):
-          xb_choices.append((sum(st.views[-1].strides[axis]>0 for st in self.sts), sum(st.views[-1].strides[axis] for st in self.sts), axis, upcast_amount))
-      if xb_choices:
-        xb_choices = sorted(xb_choices)
-        if DEBUG >= 4: print(f"float4 merging axis : {xb_choices}")
-        self.shift_to(xb_choices[0][2], amount=xb_choices[0][3])
-        self.upcast()
-        self.simplify_ones()
-        upcasted_axis.add(xb_choices[0][2])
-      else:
+      if not (xb_choices := [
+          (
+              sum(st.views[-1].strides[axis] > 0 for st in self.sts),
+              sum(st.views[-1].strides[axis] for st in self.sts),
+              axis,
+              upcast_amount,
+          ) for axis, upcast_amount in itertools.product(
+              range(self.first_reduce), [3, 4]) if axis not in upcasted_axis
+          and isinstance(self.full_shape[axis], int) and self.full_shape[axis] %
+          upcast_amount == 0 and any(st.views[-1].strides[axis] == 0 and all(
+              x[1] != 0 for x in self.upcasted_axis(buf_index))
+                                     for buf_index, st in enumerate(self.sts))
+      ]):
         break
 
+      xb_choices = sorted(xb_choices)
+      if DEBUG >= 4: print(f"float4 merging axis : {xb_choices}")
+      self.shift_to(xb_choices[0][2], amount=xb_choices[0][3])
+      self.upcast()
+      self.simplify_ones()
+      upcasted_axis.add(xb_choices[0][2])
     # if last dim is small(ish) and it's a reduce dim, upcast the reduce (loop unrolling). no simplify needed since it's just an upcast. NOTE: careful, this has broken VALIDHACKS
     if self.first_reduce < (self.shape_len-self.upcasted) and (len(list(self.shape_offsets(self.full_buf_index))) <= 4 or not any(r for _,_,r in self.upcasted_axis(self.full_buf_index))):
       if (s:=self.full_unupcasted_shape[-1]) <= 32 and isinstance(s, int):  # NOTE: cannot loop unroll symbolic axis

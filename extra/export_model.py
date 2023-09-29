@@ -138,29 +138,33 @@ def export_model(model, input:Tensor, target:str):
     prg = export_model_webgpu(functions, statements, bufs, bufs_to_save, weight_names)
   else:
     prg = json.dumps({
-      "backend": Device.DEFAULT,
-      "input": {
-        "size": bufs['input'][0],
-        "dtype": bufs['input'][1].name
-      },
-      "output": {
-        "size": bufs["outputs"][0],
-        "dtype": bufs["outputs"][1].name
-      },
-      "functions": functions,
-      "statements": [{
-        "kernel": kernel,
-        "args": args,
-        "global_size": global_size,
-        "local_size": local_size
-      } for (kernel, args, global_size, local_size) in statements],
-      "buffers": {
-        name: {
-          "size": size,
-          "dtype": dtype.name,
-          "id": weight_names[_key] if _key in weight_names else ""
-        } for name, (size,dtype,_key) in bufs.items() if name not in ["input", "outputs"]
-      }
+        "backend":
+        Device.DEFAULT,
+        "input": {
+            "size": bufs['input'][0],
+            "dtype": bufs['input'][1].name,
+        },
+        "output": {
+            "size": bufs["outputs"][0],
+            "dtype": bufs["outputs"][1].name,
+        },
+        "functions":
+        functions,
+        "statements": [{
+            "kernel": kernel,
+            "args": args,
+            "global_size": global_size,
+            "local_size": local_size,
+        } for (kernel, args, global_size, local_size) in statements],
+        "buffers": {
+            name: {
+                "size": size,
+                "dtype": dtype.name,
+                "id": weight_names.get(_key, ""),
+            }
+            for name, (size, dtype, _key) in bufs.items()
+            if name not in ["input", "outputs"]
+        },
     })
 
   return prg, bufs['input'][0], bufs['outputs'][0], state

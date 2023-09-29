@@ -119,25 +119,32 @@ def uops_to_asmstyle(lang, function_name:str, uops:List[UOp]):
         for var in args[0]:
           if not isinstance(var, NumNode):  # TODO: why is this coming through?
             lang.ins.append(AssemblyInstruction(UOps.LOAD, lang.newreg(var, dtype=dtypes.int32, scalar=True), [], 0))
-            lang.ins.append(AssemblyInstruction(UOps.LABEL, None, [], "$loop_"+var.expr))
+            lang.ins.append(AssemblyInstruction(UOps.LABEL, None, [], f"$loop_{var.expr}"))
     elif uop == UOps.ENDLOOP:
       if args[1] not in ["global", "local", "global+local"]:
         for var in reversed(args[0]):
           if not isinstance(var, NumNode):  # TODO: why is this coming through?
             lang.ins.append(AssemblyInstruction(UOps.ALU, lang.tor[var], [lang.tor[var], 1], BinaryOps.ADD))
             pred = lang.render_alu(BinaryOps.CMPLT, lang.tor[var], var.max+1, dtypes.bool)
-            lang.ins.append(AssemblyInstruction(UOps.COND_BRANCH, None, [pred], ("$loop_"+var.expr, True)))
+            lang.ins.append(
+                AssemblyInstruction(UOps.COND_BRANCH, None, [pred],
+                                    (f"$loop_{var.expr}", True)))
       elif args[1] == "global+local":
-        for i, var in enumerate(reversed(args[0])):
-          lang.ins.append(AssemblyInstruction(UOps.ENDLOOP, None, [lang.tor[var]], (var.max+1, f"gid{i}")))
+        lang.ins.extend(
+            AssemblyInstruction(UOps.ENDLOOP, None, [lang.tor[var]], (
+                var.max + 1, f"gid{i}"))
+            for i, var in enumerate(reversed(args[0])))
       elif args[1] == 'local':
-        for i, var in enumerate(reversed(args[0])):
-          lang.ins.append(AssemblyInstruction(UOps.ENDLOOP, None, [lang.tor[var]], (var.max+1, f"lid{i}")))
+        lang.ins.extend(
+            AssemblyInstruction(UOps.ENDLOOP, None, [lang.tor[var]], (
+                var.max + 1, f"lid{i}"))
+            for i, var in enumerate(reversed(args[0])))
     elif uop == UOps.CAST:
       # TODO: we should reconsider outputting CAST in the linearizer. these are needless copies
       out = lang.newreg(u, dtype)
-      for i,sr in enumerate(out.subregs()):
-        lang.ins.append(AssemblyInstruction(UOps.ALU, sr, [lang.tor[vin[i]]], UnaryOps.NOOP))
+      lang.ins.extend(
+          AssemblyInstruction(UOps.ALU, sr, [lang.tor[vin[i]]], UnaryOps.NOOP)
+          for i, sr in enumerate(out.subregs()))
     elif uop == UOps.ALU:
       out = lang.newreg(u, dtype) if u not in lang.tor else lang.tor[u]
       # this is the only thing that can violate SSA

@@ -38,7 +38,7 @@ def get_run_onnx(onnx_model: ModelProto):
       if attr == 'tensor_type':
         if "dim_value" not in getattr(type_proto, attr).shape.dim.__dir__(): return () # variable type, unable to determine shape
         elif not ret:
-          return tuple([x.dim_value for x in getattr(type_proto, attr).shape.dim])
+          return tuple(x.dim_value for x in getattr(type_proto, attr).shape.dim)
         else:
           ret.extend([(x.dim_value,) for x in getattr(type_proto, attr).shape.dim])
           return tuple(ret)
@@ -77,6 +77,7 @@ def get_run_onnx(onnx_model: ModelProto):
     elif a.type == AttributeProto.STRINGS: return tuple(x.decode("utf-8") for x in a.strings)
     elif a.type == AttributeProto.GRAPH: raise Exception(f"graph not implemented: {a.g}")
     else: raise Exception(f"can't parse {a.type} {a}")
+
   def attribute_to_dict(a: RepeatedCompositeFieldContainer[AttributeProto]): return {x.name:attribute_parse(x) for x in a}
 
   tensors: Dict[str, Tensor] = {}
@@ -143,8 +144,7 @@ def get_run_onnx(onnx_model: ModelProto):
     def fetch_tensor(x: str):
       if x in tensors: return tensors[x]
       if x in intermediate_tensors: return intermediate_tensors[x]
-      if x != str(): return input_tensors[x]
-      return None
+      return input_tensors[x] if x != str() else None
 
     for num,n in enumerate(onnx_model.graph.node):
       inp: List[Tensor] = []
@@ -160,7 +160,6 @@ def get_run_onnx(onnx_model: ModelProto):
       elif n.op_type == "Sigmoid": ret = inp[0].sigmoid()
       elif n.op_type == "Tanh": ret = inp[0].tanh()
       elif n.op_type == "MatMul": ret = inp[0].matmul(inp[1])
-      # one liners
       elif n.op_type == "Elu": ret = inp[0].elu(alpha=opt.get('alpha', 1.0))
       elif n.op_type == "Concat": ret = inp[0].cat(*inp[1:], dim=opt['axis'])
       elif n.op_type == "Transpose": ret = inp[0].permute(order=opt.get('perm', list(range(len(inp[0].shape))[::-1])))
@@ -218,7 +217,8 @@ def get_run_onnx(onnx_model: ModelProto):
           arg[axis] = (starts[i], ends[i], steps[i])
         new_shape = tuple((s, e) if st > 0 else (e+1, s+1) for s, e, st in arg)
         if any(s==e for s,e in new_shape): ret = inp[0].shrink(new_shape)
-        else: ret = inp[0].__getitem__(tuple([slice(s,e,st) for s,e,st in arg]))
+        else:else
+          ret = inp[0].__getitem__(tuple(slice(s,e,st) for s,e,st in arg))
       elif n.op_type == "Shrink":
         bias = opt['bias'] if 'bias' in opt else 0
         ret = (inp[0] < -opt['lambd'])*(inp[0]+bias) + (inp[0] > opt['lambd'])*(inp[0]-bias)
@@ -226,7 +226,7 @@ def get_run_onnx(onnx_model: ModelProto):
         assert len(opt["xs"]) == len(inp), f"len(opt['xs']):{len(opt['xs'])}, len(inp):{len(inp)} output and input has to match"
         y = opt["y"]
         intermediate_tensors[y].backward()
-        ret = tuple([t.grad for t in inp])
+        ret = tuple(t.grad for t in inp)
       elif hasattr(onnx_ops, n.op_type):
         fxn = getattr(onnx_ops, n.op_type)
         if isinstance(fxn, dict):
@@ -251,4 +251,5 @@ def get_run_onnx(onnx_model: ModelProto):
         break
 
     return {outp:intermediate_tensors[outp] for outp in output_tensor_names}
+
   return run_onnx

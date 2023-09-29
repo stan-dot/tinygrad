@@ -55,7 +55,9 @@ class LazyOp:
   @property
   def key(self): return (self.op, tuple(map(lambda x: getattr(x, "key", x), self.src)), getattr(self.arg, "key", self.arg))
 
-  def map_buffers(self, real_srcs: Mapping[LazyBuffer, Union[LazyBuffer, LazyOp]]) -> LazyOp: return LazyOp(self.op, tuple([y.map_buffers(real_srcs) for y in self.src]), self.arg)
+  def map_buffers(self, real_srcs: Mapping[LazyBuffer, Union[LazyBuffer, LazyOp]]) -> LazyOp:
+    return LazyOp(self.op, tuple(y.map_buffers(real_srcs) for y in self.src),
+                  self.arg)
   def get_lazyops(self) -> List[LazyOp]: return [self] + [item for x in self.src for item in x.get_lazyops()]
 
   def replace_with_movement_ops(self:LazyOp, ops:List[Tuple[MovementOps, Tuple[Any, ...]]]) -> 'LazyBuffer':
@@ -91,7 +93,11 @@ class _Device:
   @functools.lru_cache(maxsize=None)  # this class is a singleton, pylint: disable=method-cache-max-size-none
   def __getitem__(self, x:str) -> Union[Interpreted, Compiled]:
     x = x.split(":")[0].upper()
-    return [cls for cname, cls in inspect.getmembers(importlib.import_module(f'tinygrad.runtime.ops_{x.lower()}')) if (cname.lower() == x.lower() + "buffer") and x in self._buffers][0]
+    return [
+        cls for cname, cls in inspect.getmembers(
+            importlib.import_module(f'tinygrad.runtime.ops_{x.lower()}'))
+        if cname.lower() == f"{x.lower()}buffer" and x in self._buffers
+    ][0]
   @functools.cached_property
   def DEFAULT(self) -> str:
     device_from_env: Optional[str] = functools.reduce(lambda val, ele: ele if getenv(ele) == 1 else val, self._buffers, None)
@@ -121,13 +127,22 @@ class Interpreted:
     if TernaryOps.MULACC in self.fxn_for_op and ast.op == ReduceOps.SUM and isinstance(ast.src[0], LazyOp) and ast.src[0].op == BinaryOps.MUL:
       ast = LazyOp(TernaryOps.MULACC, ast.src[0].src, ast.arg)
     created_context = context is None
-    if context is None: context = dict()
+    if context is None:
+      context = {}
     if not created_context and ast in context: return context[ast]
     srcs = [self.exec_ast(cast(LazyOp, x), inputs=inputs, context=context, **kwargs) for x in ast.src]
     if DEBUG >= 3: st = time.perf_counter()
     ret = self.from_underlying(self.fxn_for_op[ast.op](*([self.to_underlying(x) for x in srcs] + ([ast.arg] if ast.arg is not None else []))))
     if output is not None and ret.dtype != output.dtype and UnaryOps.CAST in self.fxn_for_op: ret = self.from_underlying(self.fxn_for_op[UnaryOps.CAST](self.to_underlying(ret), (output.dtype, False))) # Do manual casting of ret if it does not match the required output dtype.
-    if DEBUG >= 5 or (self.buffer != FlopCounter and DEBUG >= 3): print(f"*** {'exec' if created_context else '    '} {GlobalCounters.mem_used/1e9:5.2f} GB {(time.perf_counter()-st)*1e3:7.2f} ms op: {ast.op:20s} out({ret.dtype.name}): {str(ret._buf.shape) if hasattr(ret._buf, 'shape') else str(len(ret._buf)):30s} in({len(srcs)}):", list(set(x._buf.shape if hasattr(x._buf, 'shape') else len(x._buf) for x in srcs)), ast.arg if ast.arg is not None else "")
+    if DEBUG >= 5 or (self.buffer != FlopCounter and DEBUG >= 3):
+      print(
+          f"*** {'exec' if created_context else '    '} {GlobalCounters.mem_used / 1000000000.0:5.2f} GB {(time.perf_counter() - st) * 1000.0:7.2f} ms op: {ast.op:20s} out({ret.dtype.name}): {str(ret._buf.shape) if hasattr(ret._buf, 'shape') else str(len(ret._buf)):30s} in({len(srcs)}):",
+          list({
+              x._buf.shape if hasattr(x._buf, 'shape') else len(x._buf)
+              for x in srcs
+          }),
+          ast.arg if ast.arg is not None else "",
+      )
     if not created_context: context[ast] = ret
     if output is not None and output.output_buffer is not None:
       # TODO: does this check have any meaning anymore?

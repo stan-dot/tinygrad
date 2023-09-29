@@ -192,7 +192,11 @@ class TestOpt(unittest.TestCase):
         # TODO: this should be 4, but the sum output child stays around
         # with pushing_permutes it can be 3
         # TODO: broken with optim fixes
-        assert len(CacheCollector.cache) in [4,5,6], f"optimizer didn't fold conv-backward SGD, got {len(CacheCollector.cache)}"
+        assert len(CacheCollector.cache) in {
+            4,
+            5,
+            6,
+        }, f"optimizer didn't fold conv-backward SGD, got {len(CacheCollector.cache)}"
     # Tensor.training = False
 
   def test_fold_2convs_sgd(self):

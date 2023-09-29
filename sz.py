@@ -16,14 +16,14 @@ def gen_stats(base_path="."):
       relfilepath = os.path.relpath(filepath, base_path)
       with tokenize.open(filepath) as file_:
         tokens = [t for t in tokenize.generate_tokens(file_.readline) if t.type in TOKEN_WHITELIST]
-        token_count, line_count = len(tokens), len(set([t.start[0] for t in tokens]))
+        token_count, line_count = len(tokens), len({t.start[0] for t in tokens})
         table.append([relfilepath, line_count, token_count/line_count])
   return table
 
 def gen_diff(table_old, table_new):
   table = []
-  files_new = set([x[0] for x in table_new])
-  files_old = set([x[0] for x in table_old])
+  files_new = {x[0] for x in table_new}
+  files_old = {x[0] for x in table_old}
   added, deleted, unchanged = files_new - files_old, files_old - files_new, files_new & files_old
   if added:
     for file in added:
@@ -41,7 +41,8 @@ def gen_diff(table_old, table_new):
         table.append([file_stat_new[0][0], file_stat_new[0][1], file_stat_new[0][1]-file_stat_old[0][1], file_stat_new[0][2], file_stat_new[0][2]-file_stat_old[0][2]])
   return table
 
-def display_diff(diff): return "+"+str(diff) if diff > 0 else str(diff)
+def display_diff(diff):
+  return f"+{str(diff)}" if diff > 0 else str(diff)
 
 if __name__ == "__main__":
   if len(sys.argv) == 3:
@@ -59,10 +60,10 @@ if __name__ == "__main__":
       print("### Changes")
       print("```")
       print(tabulate([headers] + sorted(table, key=lambda x: -x[1]), headers="firstrow", intfmt=(..., "d", "+d"), floatfmt=(..., ..., ..., ".1f", "+.1f"))+"\n")
-      print(f"\ntotal lines changes: {display_diff(sum([x[2] for x in table]))}")
+      print(f"\ntotal lines changes: {display_diff(sum(x[2] for x in table))}")
       print("```")
     else:
       print(tabulate([headers] + sorted(table, key=lambda x: -x[1]), headers="firstrow", floatfmt=".1f")+"\n")
       for dir_name, group in itertools.groupby(sorted([(x[0].rsplit("/", 1)[0], x[1], x[2]) for x in table]), key=lambda x:x[0]):
-        print(f"{dir_name:30s} : {sum([x[1] for x in group]):6d}")
-      print(f"\ntotal line count: {sum([x[1] for x in table])}")
+        print(f"{dir_name:30s} : {sum(x[1] for x in group):6d}")
+      print(f"\ntotal line count: {sum(x[1] for x in table)}")

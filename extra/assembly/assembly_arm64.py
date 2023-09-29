@@ -20,8 +20,8 @@ def specialize_to_arm64(fn_nm, asm):
   var_size = 16
   prev_uop:Optional[UOps] = None
   ins = []
-  x_regs = ['x' + str(i) for i in reversed(range(12))]
-  s_regs = ['s' + str(i) for i in reversed(range(3,32)) if i <= 7 or i >= 16]
+  x_regs = [f'x{str(i)}' for i in reversed(range(12))]
+  s_regs = [f's{str(i)}' for i in reversed(range(3,32)) if i <= 7 or i >= 16]
   type_to_reg = {dtypes.double: "d", dtypes.half: 'h', dtypes.float32: 's', dtypes.bool: 'w', dtypes.int8:'w', dtypes.int32: 'w', dtypes.int64: 'x', dtypes.uint8:'w', dtypes.uint32: 'w', dtypes.uint64: 'x'}
   alu = {BinaryOps.ADD: "add", BinaryOps.SUB: "sub", BinaryOps.MUL: "mul", BinaryOps.DIV: "div", BinaryOps.MAX: "max",
           BinaryOps.MOD: "", BinaryOps.CMPLT: "subs",
@@ -74,7 +74,7 @@ def specialize_to_arm64(fn_nm, asm):
     # Assign a registers to the variables using live ranges.
     allocate_regs([out] + vin)
     # Assign temp regs to vin and load them before direct use
-    for i, v in enumerate([v for v in vin if v.__class__ is not int and v.nm in mem_vars]):
+    for i, v in enumerate(v for v in vin if v.__class__ is not int and v.nm in mem_vars):
       rtor[v.nm] = temp_floats[i] if dtypes.is_float(v[1]) else temp_ints[i]
       # ARM64 addressing constraints https://devblogs.microsoft.com/oldnewthing/20220728-00/?p=106912
       ins.append(f"mov x15, {mem_vars[v.nm]}")
@@ -112,7 +112,7 @@ def specialize_to_arm64(fn_nm, asm):
         #NOTE: Not a real instruction, use to emulate a ext call in unicorn
         if CI: ins.append(f"{alu[arg]} {rtor[out.nm]} {rtor[vin[0].nm]}")
         else:
-          save_regs = [k for k in rtor.keys() if k != out.nm and k not in mem_vars]
+          save_regs = [k for k in rtor if k != out.nm and k not in mem_vars]
           ins.append(f"sub sp, sp, #{(len(save_regs))*16}")
           # Save the registers before they are cleared by func call
           for i,k in enumerate(save_regs,1):

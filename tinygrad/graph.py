@@ -40,7 +40,8 @@ def nm(x):
 def get_sop(op: List[Op]):
   op = [x for x in op if x not in BufferOps]
   if len(op) <= 2: return '.'.join([str(y).split(".")[1] for y in op][::-1])
-  if len(op) <= 4: return '.'.join([str(y).split(".")[1][0:3] for y in op][::-1])
+  if len(op) <= 4:
+    return '.'.join([str(y).split(".")[1][:3] for y in op][::-1])
   return str(len(op))
 
 def str_dtype(dtyp):
@@ -68,7 +69,11 @@ def log_schedule_item(iop: LazyOp, ret: 'LazyBuffer', inp: Tuple['LazyBuffer', .
         G.nodes[nm(x)]['label'] = str(x.shape)+str_dtype(ret.dtype)
     if nm(ret) not in G.nodes: G.add_node(nm(ret))
 
-    G.nodes[nm(ret)]['label'] = (str(set(x.shape for x in inp))+"\n"+str(ret.shape) if optype == ReduceOps else str(ret.shape))+str_dtype(ret.dtype)+(f"\n{iop.op}" if iop.op in LoadOps else "")
+    G.nodes[nm(ret)]['label'] = ((str({x.shape
+                                       for x in inp}) + "\n" + str(ret.shape)
+                                  if optype == ReduceOps else str(ret.shape)) +
+                                 str_dtype(ret.dtype) +
+                                 (f"\n{iop.op}" if iop.op in LoadOps else ""))
     G.nodes[nm(ret)]['fillcolor'] = top_colors[optype]
     G.nodes[nm(ret)]['color'] = 'black'
     G.nodes[nm(ret)]['style'] = 'filled'

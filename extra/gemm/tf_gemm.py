@@ -1,8 +1,7 @@
 import time
 import tensorflow as tf
 
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
+if gpus := tf.config.list_physical_devices('GPU'):
   try:
     # Currently, memory growth needs to be the same across GPUs
     for gpu in gpus:
