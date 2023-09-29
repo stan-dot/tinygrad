@@ -36,7 +36,15 @@ class RDNACodegen(AssemblyCodegen):
 
   def specialize(self, asm) -> Tuple[str, str]:
     args = []
-    for i,b in enumerate(self.bufs): args.append({'.address_space': 'global', '.name': f'buf_{i}', '.offset': i*8, '.size': 8, '.type_name': b.dtype.name+"*", '.value_kind': 'global_buffer'})
+    for i,b in enumerate(self.bufs):
+      args.append({
+          '.address_space': 'global',
+          '.name': f'buf_{i}',
+          '.offset': i * 8,
+          '.size': 8,
+          '.type_name': f"{b.dtype.name}*",
+          '.value_kind': 'global_buffer',
+      })
     ins = []
 
     v_cnt = 3  # v[0:2] is local_xyz
@@ -58,8 +66,10 @@ class RDNACodegen(AssemblyCodegen):
         ins.append('s_waitcnt lgkmcnt(0), vmcnt(0)')
         pend_regs.clear()
       return rtor[x]
+
     def reg_out(x):
       return rtor[x]
+
     for uop, out, vin, arg in asm:
       if uop == UOps.DEFINE_REGISTER:
         if arg[0][0] in [dtypes.uint32, dtypes.uint64, dtypes.int64, dtypes.int32, dtypes.float32, dtypes._float4]:
@@ -121,7 +131,7 @@ class RDNACodegen(AssemblyCodegen):
           alu_arg = alu[arg]
           if arg == TernaryOps.MULACC and out == vin[2]:
             alu_arg = "fmac"
-            vin = vin[0:2]
+            vin = vin[:2]
           if out.dtype == dtypes._float4:
             for rr in zip(*[x.subregs() if x.dtype == dtypes._float4 else [x,x,x,x] for x in [out]+vin]):
               ins.append(f"{'s_' if rr[0].scalar else 'v_'}{alu_arg}_{dtype_to_rdnatype[rr[0].dtype]} {reg_out(rr[0])}, {', '.join(reg_in(x) if x.__class__ is Register else str(x) for x in rr[1:])}")
@@ -199,5 +209,13 @@ class RDNACodegen(AssemblyCodegen):
 
     code = boilerplate_start + "\n" + '\n'.join("%s %d" % x for x in kernel_desc.items()) + "\n" +  code_start + '\n'.join(ins) + "\n.amdgpu_metadata\n" + yaml.dump(metadata) + ".end_amdgpu_metadata"
     obj = early_exec(([ROCM_LLVM_PATH / "llvm-mc", '--arch=amdgcn', '--mcpu=gfx1100', '--triple=amdgcn-amd-amdhsa', '--filetype=obj', '-'], code.encode("utf-8")))
-    asm = early_exec(([ROCM_LLVM_PATH / "ld.lld", "/dev/stdin", "-o", "/dev/stdout", "--pie"], obj))
-    return asm
+    return early_exec((
+        [
+            ROCM_LLVM_PATH / "ld.lld",
+            "/dev/stdin",
+            "-o",
+            "/dev/stdout",
+            "--pie",
+        ],
+        obj,
+    ))

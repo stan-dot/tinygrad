@@ -169,8 +169,9 @@ class Generator:
     self.resblocks = []
     for i in range(len(self.ups)):
       ch = upsample_initial_channel // (2 ** (i + 1))
-      for _, (k, d) in enumerate(zip(resblock_kernel_sizes, resblock_dilation_sizes)):
-        self.resblocks.append(resblock(ch, k, d))
+      self.resblocks.extend(
+          resblock(ch, k, d)
+          for k, d in zip(resblock_kernel_sizes, resblock_dilation_sizes))
     self.conv_post = nn.Conv1d(ch, 1, 7, 1, padding=3, bias=False)
     if gin_channels != 0: self.cond = nn.Conv1d(gin_channels, upsample_initial_channel, 1)
   def forward(self, x: Tensor, g=None):
@@ -404,7 +405,8 @@ def piecewise_rational_quadratic_transform(inputs, un_normalized_widths, un_norm
   else: spline_fn, spline_kwargs = unconstrained_rational_quadratic_spline, {'tails': tails, 'tail_bound': tail_bound}
   return spline_fn(inputs=inputs, un_normalized_widths=un_normalized_widths, un_normalized_heights=un_normalized_heights, un_normalized_derivatives=un_normalized_derivatives, inverse=inverse, min_bin_width=min_bin_width, min_bin_height=min_bin_height, min_derivative=min_derivative, **spline_kwargs)
 def unconstrained_rational_quadratic_spline(inputs, un_normalized_widths, un_normalized_heights, un_normalized_derivatives, inverse=False, tails='linear', tail_bound=1., min_bin_width=DEFAULT_MIN_BIN_WIDTH, min_bin_height=DEFAULT_MIN_BIN_HEIGHT, min_derivative=DEFAULT_MIN_DERIVATIVE):
-  if not tails == 'linear': raise RuntimeError('{} tails are not implemented.'.format(tails))
+  if tails != 'linear':
+    raise RuntimeError(f'{tails} tails are not implemented.')
   constant = np.log(np.exp(1 - min_derivative) - 1)
   un_normalized_derivatives = cat_lr(un_normalized_derivatives, constant, constant)
   output, log_abs_det = rational_quadratic_spline(inputs=inputs.squeeze(dim=0).squeeze(dim=0), unnormalized_widths=un_normalized_widths.squeeze(dim=0).squeeze(dim=0), unnormalized_heights=un_normalized_heights.squeeze(dim=0).squeeze(dim=0), unnormalized_derivatives=un_normalized_derivatives.squeeze(dim=0).squeeze(dim=0), inverse=inverse, left=-tail_bound, right=tail_bound, bottom=-tail_bound, top=tail_bound, min_bin_width=min_bin_width, min_bin_height=min_bin_height, min_derivative=min_derivative)
@@ -565,14 +567,17 @@ def download_if_not_present(file_path: Path, url: str):
 class TextMapper: # Based on https://github.com/keithito/tacotron
   def __init__(self, symbols, apply_cleaners=True):
     self.apply_cleaners, self.symbols, self._inflect = apply_cleaners, symbols, None
-    self._symbol_to_id, _id_to_symbol = {s: i for i, s in enumerate(symbols)}, {i: s for i, s in enumerate(symbols)}
+    self._symbol_to_id, _id_to_symbol = {s: i
+                                         for i, s in enumerate(symbols)
+                                         }, dict(enumerate(symbols))
     self._whitespace_re, self._abbreviations = re.compile(r'\s+'), [(re.compile('\\b%s\\.' % x[0], re.IGNORECASE), x[1]) for x in [('mrs', 'misess'), ('mr', 'mister'), ('dr', 'doctor'), ('st', 'saint'), ('co', 'company'), ('jr', 'junior'), ('maj', 'major'), ('gen', 'general'), ('drs', 'doctors'), ('rev', 'reverend'), ('lt', 'lieutenant'), ('hon', 'honorable'), ('sgt', 'sergeant'), ('capt', 'captain'), ('esq', 'esquire'), ('ltd', 'limited'), ('col', 'colonel'), ('ft', 'fort'), ]]
   def text_to_sequence(self, text, cleaner_names):
     if self.apply_cleaners:
       for name in cleaner_names:
-        cleaner = getattr(self, name)
-        if not cleaner: raise ModuleNotFoundError('Unknown cleaner: %s' % name)
-        text = cleaner(text)
+        if cleaner := getattr(self, name):
+          text = cleaner(text)
+        else:
+          raise ModuleNotFoundError(f'Unknown cleaner: {name}')
     else: text = text.strip()
     return [self._symbol_to_id[symbol] for symbol in text]
   def get_text(self, text, add_blank=False, cleaners=('english_cleaners',)):
@@ -592,14 +597,29 @@ class TextMapper: # Based on https://github.com/keithito/tacotron
   def cjke_cleaners2(self, text): return re.sub(r'([^\.,!\?\-…~])$', r'\1.', re.sub(r'\s+$', '', self.english_to_ipa2(text)))
   def cjks_cleaners(self, text): return re.sub(r'([^\.,!\?\-…~])$', r'\1.', re.sub(r'\s+$', '', self.english_to_lazy_ipa(text)))
   def english_to_ipa2(self, text):
-    _ipa_to_ipa2 = [(re.compile('%s' % x[0]), x[1]) for x in [ ('r', 'ɹ'), ('ʤ', 'dʒ'), ('ʧ', 'tʃ')]]
+    _ipa_to_ipa2 = [(re.compile(f'{x[0]}'), x[1])
+                    for x in [('r', 'ɹ'), ('ʤ', 'dʒ'), ('ʧ', 'tʃ')]]
     return reduce(lambda t, rx: re.sub(rx[0], rx[1], t), _ipa_to_ipa2, self.mark_dark_l(self.english_to_ipa(text))).replace('...', '…')
-  def mark_dark_l(self, text): return re.sub(r'l([^aeiouæɑɔəɛɪʊ ]*(?: |$))', lambda x: 'ɫ' + x.group(1), text)
+  def mark_dark_l(self, text):
+    return re.sub(r'l([^aeiouæɑɔəɛɪʊ ]*(?: |$))', lambda x: f'ɫ{x.group(1)}', text)
   def english_to_ipa(self, text):
     import eng_to_ipa as ipa
     return self.collapse_whitespace(ipa.convert(self.normalize_numbers(self.expand_abbreviations(unidecode(text).lower()))))
   def english_to_lazy_ipa(self, text):
-    _lazy_ipa = [(re.compile('%s' % x[0]), x[1]) for x in [('r', 'ɹ'), ('æ', 'e'), ('ɑ', 'a'), ('ɔ', 'o'), ('ð', 'z'), ('θ', 's'), ('ɛ', 'e'), ('ɪ', 'i'), ('ʊ', 'u'), ('ʒ', 'ʥ'), ('ʤ', 'ʥ'), ('ˈ', '↓')]]
+    _lazy_ipa = [(re.compile(f'{x[0]}'), x[1]) for x in [
+        ('r', 'ɹ'),
+        ('æ', 'e'),
+        ('ɑ', 'a'),
+        ('ɔ', 'o'),
+        ('ð', 'z'),
+        ('θ', 's'),
+        ('ɛ', 'e'),
+        ('ɪ', 'i'),
+        ('ʊ', 'u'),
+        ('ʒ', 'ʥ'),
+        ('ʤ', 'ʥ'),
+        ('ˈ', '↓'),
+    ]]
     return reduce(lambda t, rx: re.sub(rx[0], rx[1], t), _lazy_ipa, self.english_to_ipa(text))
   def expand_abbreviations(self, text): return reduce(lambda t, abbr: re.sub(abbr[0], abbr[1], t), self._abbreviations, text)
   def collapse_whitespace(self, text): return re.sub(self._whitespace_re, ' ', text)
@@ -617,11 +637,15 @@ class TextMapper: # Based on https://github.com/keithito/tacotron
   def _expand_dollars(self, m):
     match = m.group(1)
     parts = match.split('.')
-    if len(parts) > 2: return match + ' dollars'  # Unexpected format
+    if len(parts) > 2:
+      return f'{match} dollars'
     dollars, cents = int(parts[0]) if parts[0] else 0, int(parts[1]) if len(parts) > 1 and parts[1] else 0
-    if dollars and cents: return '%s %s, %s %s' % (dollars, 'dollar' if dollars == 1 else 'dollars', cents, 'cent' if cents == 1 else 'cents')
-    if dollars: return '%s %s' % (dollars, 'dollar' if dollars == 1 else 'dollars')
-    if cents: return '%s %s' % (cents, 'cent' if cents == 1 else 'cents')
+    if dollars:
+      if cents:
+        return f"{dollars} {'dollar' if dollars == 1 else 'dollars'}, {cents} {'cent' if cents == 1 else 'cents'}"
+      return f"{dollars} {'dollar' if dollars == 1 else 'dollars'}"
+    if cents:
+      return f"{cents} {'cent' if cents == 1 else 'cents'}"
     return 'zero dollars'
   def _expand_decimal_point(self, m): return m.group(1).replace('.', ' point ')
   def _expand_ordinal(self, m): return self._inflect.number_to_words(m.group(0))
@@ -629,8 +653,10 @@ class TextMapper: # Based on https://github.com/keithito/tacotron
     num = int(m.group(0))
     if 1000 < num < 3000:
       if num == 2000: return 'two thousand'
-      if 2000 < num < 2010: return 'two thousand ' + self._inflect.number_to_words(num % 100)
-      if num % 100 == 0: return self._inflect.number_to_words(num // 100) + ' hundred'
+      if 2000 < num < 2010:
+        return f'two thousand {self._inflect.number_to_words(num % 100)}'
+      if num % 100 == 0:
+        return f'{self._inflect.number_to_words(num // 100)} hundred'
       return _inflect.number_to_words(num, andword='', zero='oh', group=2).replace(', ', ' ')
     return self._inflect.number_to_words(num, andword='')
 

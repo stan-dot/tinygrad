@@ -159,8 +159,7 @@ def accumulate_predictions_for_coco(coco_results, json_result_file, rm=False):
 
 def remove_dup(l):
   seen = set()
-  seen_add = seen.add
-  return [x for x in l if not (x in seen or seen_add(x))]
+  return [x for x in l if x not in seen and not seen.add(x)]
 
 class NpEncoder(json.JSONEncoder):
   def default(self, obj):
@@ -176,9 +175,7 @@ class NpEncoder(json.JSONEncoder):
 def evaluate_predictions_on_coco(json_result_file, iou_type="bbox"):
   coco_results = []
   with open(json_result_file, "r") as f:
-    for line in f:
-      coco_results.append(json.loads(line))
-
+    coco_results.extend(json.loads(line) for line in f)
   coco_gt = COCO(str(BASEDIR/'annotations/instances_val2017.json'))
   set_of_json = remove_dup([json.dumps(d, cls=NpEncoder) for d in coco_results])
   unique_list = [json.loads(s) for s in set_of_json]

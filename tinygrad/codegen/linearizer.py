@@ -64,16 +64,20 @@ def to_image_idx(base_shape:Tuple[int, ...], idxy:Node, valid:Node) -> Tuple[Tup
 
       if k*(node.a) == same_sum: same_dict[same_sum] = same_dict.get(same_sum, []) + [(k, node)]
 
-    for key in same_dict.keys():
+    for key in same_dict:
       same, mnn, mxn = key.flat_components, key.min, key.max # type: ignore # Same is sumnode because node.a is SumNode
       for k, node in same_dict[key]: # TODO: This part may need more thinking
-        if k < 0: mnn = (-k)*max((-node.b) + 1, min([-lal.b if isinstance(lal, MulNode) else 1 for lal in same]))
+        if k < 0:
+          mnn = -k * max(
+              (-node.b) + 1,
+              min(-lal.b if isinstance(lal, MulNode) else 1 for lal in same),
+          )
         else: mxn = (node.b - 1)*k
 
       fake_var = Variable("valid_fake", mnn, mxn)
       total = (Variable.sum([x for x in idx_nodes if x not in same]) + fake_var) % idx.b
       idx = total.substitute({fake_var: key})
-      # TODO: If idx has no ModNode we may can remove the valid node, but removing it needs careful thinking
+          # TODO: If idx has no ModNode we may can remove the valid node, but removing it needs careful thinking
 
   # Simplify SumNodes
   # This part just removes valid nodes if node is exactly same as idx or idy
@@ -116,14 +120,19 @@ class UOp(NamedTuple):
 
 
 def get_grouped_dims(prefix, start_dim, local_dims, maxdim:int=0):
-  local_idxs = loop_local_idxs = [Variable(f"{prefix}{start_dim+i}", 0, s-1) for i,s in enumerate(local_dims[0:maxdim-1] + (prod(local_dims[maxdim-1:]),) if len(local_dims) > maxdim else local_dims)]
+  local_idxs = loop_local_idxs = [
+      Variable(f"{prefix}{start_dim+i}", 0, s - 1)
+      for i, s in enumerate(local_dims[:maxdim - 1] +
+                            (prod(local_dims[maxdim - 1:]), )
+                            if len(local_dims) > maxdim else local_dims)
+  ]
   if maxdim != 0 and len(local_dims) > maxdim:
     dd = local_idxs[maxdim-1]
     nli = []
     for s in local_dims[maxdim-1:][::-1]:
       nli.append(dd % s)
       dd //= s
-    local_idxs = local_idxs[0:maxdim-1] + nli[::-1]
+    local_idxs = local_idxs[:maxdim-1] + nli[::-1]
   return local_idxs, [x for x in loop_local_idxs if not isinstance(x, NumNode)]
 
 class Linearizer(OptimizedKernel):
@@ -148,7 +157,7 @@ class Linearizer(OptimizedKernel):
     upcast_dim = self.get_upcast_dim(i)
 
     amt = 1
-    if len(upcast_dim) == 1 and len(expanded_nodes[upcast_dim[0]]) in [4,2]:
+    if len(upcast_dim) == 1 and len(expanded_nodes[upcast_dim[0]]) in {4, 2}:
       dim, amt = upcast_dim[0], len(expanded_nodes[upcast_dim[0]])
 
     # calculate expr_idxs using placeholder variables
@@ -207,7 +216,7 @@ class Linearizer(OptimizedKernel):
 
     # float4 grouping
     upcast_dim = self.get_upcast_dim(i)
-    if len(upcast_dim) == 1 and len(expanded_nodes[upcast_dim[0]]) in [2,4]:
+    if len(upcast_dim) == 1 and len(expanded_nodes[upcast_dim[0]]) in {2, 4}:
       grouped_store_offset = defaultdict(list)
       for k in store_offset:
         _idx = k[:upcast_dim[0]] + (expanded_nodes[upcast_dim[0]][0],) + k[upcast_dim[0]+1:]
@@ -235,7 +244,7 @@ class Linearizer(OptimizedKernel):
     self.process()
 
     # global uop cache
-    self.saved_exprs: Dict[Tuple, UOp] = dict()
+    self.saved_exprs: Dict[Tuple, UOp] = {}
 
     # limit dims if we need to
     # TODO: broken, and doesn't really belong here
@@ -273,7 +282,8 @@ class Linearizer(OptimizedKernel):
 
     # name the function something unique
     Linearizer.kernel_cnt[self.function_name] += 1
-    suffix = f"{'n'+str(Linearizer.kernel_cnt[self.function_name]-1)}" if Linearizer.kernel_cnt[self.function_name] > 1 else ""
+    suffix = (f"{f'n{str(Linearizer.kernel_cnt[self.function_name] - 1)}'}"
+              if Linearizer.kernel_cnt[self.function_name] > 1 else "")
     self.function_name, self.display_name = self.function_name+suffix, self.display_name+colored(suffix, 'BLACK')
 
     # define indexes
@@ -287,6 +297,7 @@ class Linearizer(OptimizedKernel):
       self.loop_uops.update({x.expr:self.uop(UOps.LOOP, dtypes.int32, (
         self.const(x.min) if isinstance(x.min, int) else cast(Variable, x.min).render(self.render_ops, self),
         self.const(x.max) if isinstance(x.max, int) else cast(Variable, x.max).render(self.render_ops, self)), cachable=False) for x in xx if not isinstance(x, NumNode) and x.expr is not None})
+
     def end_loop(xx:List[Variable]):
       for x in xx[::-1]:
         if not isinstance(x, NumNode) and x.expr is not None:

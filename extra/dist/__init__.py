@@ -28,7 +28,7 @@ def init_oob(world_size:int):
   os.environ["WORLD_SIZE"] = str(world_size)
 
   global OOB
-  OOB = _OOB([mp.Pipe(False) for _ in range(world_size * world_size)])
+  OOB = _OOB([mp.Pipe(False) for _ in range(world_size**2)])
 
 # this runs in the spawned process so we can do all the delayed runtime initialization
 def _process_wrap(rank:int, device:str, oob:_OOB, fn:Callable, args=()):

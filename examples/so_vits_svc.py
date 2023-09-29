@@ -70,12 +70,7 @@ class ContentVec:
     self.mask_emb = Tensor.uniform(cfg.encoder_embed_dim, dtype=dtypes.float32)
     self.label_embs_concat = Tensor.uniform(504, final_dim, dtype=dtypes.float32)
   def forward_features(self, source, padding_mask):
-    if self.feature_grad_mult > 0:
-      features = self.feature_extractor(source, padding_mask)
-      if self.feature_grad_mult != 1.0: pass  # training: GradMultiply.forward(features, self.feature_grad_mult)
-    else:
-      features = self.feature_extractor(source, padding_mask)
-    return features
+    return self.feature_extractor(source, padding_mask)
   def forward_padding_mask(self, features, padding_mask):  # replaces original forward_padding_mask for batch inference
     lengths_org = tilde(padding_mask.cast(dtypes.bool)).cast(dtypes.int64).sum(1)  # ensure its bool for tilde
     lengths = (lengths_org - 400).float().div(320).floor().cast(dtypes.int64) + 1  # intermediate float to divide
@@ -207,8 +202,7 @@ class MultiHeadAttention:
     q, k, v = self.q_proj(x), self.k_proj(xa or x), self.v_proj(xa or x)
     q, k, v = [x.reshape(*q.shape[:2], self.n_head, -1) for x in (q, k, v)]
     wv = Tensor.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), None).transpose(1, 2).reshape(*x.shape[:2], -1)
-    ret =  self.out_proj(wv).transpose(0,1)  # BxTxC -> TxBxC
-    return ret
+    return self.out_proj(wv).transpose(0,1)
 
 class ConvFeatureExtractionModel:
   def __init__(self, conv_layers, dropout=.0, mode="default", conv_bias=False):
@@ -227,12 +221,22 @@ class ConvFeatureExtractionModel:
         return [make_conv(), partial(Tensor.dropout, p=dropout), GroupNormMasked(dim, dim, affine=True), Tensor.gelu]
       else:
         return [make_conv(), partial(Tensor.dropout, p=dropout), Tensor.gelu]
+
     in_d, self.conv_layers, self.mode = 1, [], mode
     for i, cl in enumerate(conv_layers):
-      assert len(cl) == 3, "invalid conv definition: " + str(cl)
+      assert len(cl) == 3, f"invalid conv definition: {str(cl)}"
       (dim, k, stride) = cl
       if i == 0: self.cl = cl
-      self.conv_layers.append(block(in_d, dim, k, stride, is_layer_norm=(mode == "layer_norm"), is_group_norm=((mode == "default" or mode == "group_norm_masked") and i == 0), conv_bias=conv_bias))
+      self.conv_layers.append(
+          block(
+              in_d,
+              dim,
+              k,
+              stride,
+              is_layer_norm=(mode == "layer_norm"),
+              is_group_norm=mode in ["default", "group_norm_masked"] and i == 0,
+              conv_bias=conv_bias,
+          ))
       in_d = dim
   def __call__(self, x:Tensor, padding_mask:Tensor):
     x = x.unsqueeze(1)  # BxT -> BxCxT
@@ -275,8 +279,7 @@ class GroupNormMasked:  # https://github.com/auspicious3000/contentvec/blob/d746
     bsz, n_c, length = x.shape
     assert n_c % self.num_groups == 0
     x = x.reshape(bsz, self.num_groups, n_c // self.num_groups, length)
-    if mask is None: mask = Tensor.ones_like(x)
-    else: mask = mask.reshape(bsz, 1, 1, length)
+    mask = Tensor.ones_like(x) if mask is None else mask.reshape(bsz, 1, 1, length)
     x = x * mask
     lengths = mask.sum(axis=3, keepdim=True)
     assert x.shape[2] == 1
@@ -422,8 +425,9 @@ class Generator:
       self.noise_convs.append(nn.Conv1d(1, c_cur, kernel_size=stride_f0 * 2, stride=stride_f0, padding=(stride_f0+1) // 2) if (i + 1 < len(upsample_rates)) else nn.Conv1d(1, c_cur, kernel_size=1))
     for i in range(len(self.ups)):
       ch = upsample_initial_channel // (2 ** (i + 1))
-      for _, (k, d) in enumerate(zip(resblock_kernel_sizes, resblock_dilation_sizes)):
-        self.resblocks.append(resblock(ch, k, d))
+      self.resblocks.extend(
+          resblock(ch, k, d)
+          for k, d in zip(resblock_kernel_sizes, resblock_dilation_sizes))
     self.conv_post = nn.Conv1d(ch, 1, 7, 1, padding=3)
     if gin_channels != 0: self.cond = nn.Conv1d(gin_channels, upsample_initial_channel, 1)
     self.upp = np.prod(upsample_rates)
@@ -448,8 +452,7 @@ class Generator:
 def randn_like(x:Tensor) -> Tensor: return Tensor.randn(*x.shape, dtype=x.dtype).to(device=x.device)
 
 def tilde(x: Tensor) -> Tensor:
-  if x.dtype == dtypes.bool: return (1 - x).cast(dtypes.bool)
-  return (x + 1) * -1  # this seems to be what the ~ operator does in pytorch for non bool
+  return (1 - x).cast(dtypes.bool) if x.dtype == dtypes.bool else (x + 1) * -1
 
 def lengths_to_padding_mask(lens:Tensor) -> Tensor:
   bsz, max_lens = lens.shape[0], lens.max().numpy().item()
@@ -488,10 +491,12 @@ def load_checkpoint_enc(checkpoint_path, model: ContentVec, optimizer=None, skip
         if k.isnumeric(): obj = obj[int(k)]
         elif isinstance(obj, dict): obj = obj[k]
         else:
-          if k in ["weight_g", "weight_v"]:
+          if k == "weight_g":
             parent, skip = obj, True
             if k == "weight_g": weight_g = v
-            else: weight_v = v
+          elif k == "weight_v":
+            parent, skip = obj, True
+            weight_v = v
           if not skip:
             parent = obj
             obj = getattr(obj, k)
@@ -500,12 +505,15 @@ def load_checkpoint_enc(checkpoint_path, model: ContentVec, optimizer=None, skip
         setattr(obj, "weight_v", weight_v.numpy())
         obj, v = getattr(parent, "weight"), weight_norm(weight_v, weight_g, 0)
         weight_g, weight_v, parent, skip = None, None, None, False
-      if not skip and obj.shape == v.shape:
-        if "feature_extractor" in key and (isinstance(parent, nn.GroupNorm) or isinstance(parent, nn.LayerNorm)):  # cast
-          obj.assign(v.to(obj.device).float())
+      if not skip:
+        if obj.shape == v.shape:
+          if "feature_extractor" in key and (isinstance(
+              parent, (nn.GroupNorm, nn.LayerNorm))):  # cast
+            obj.assign(v.to(obj.device).float())
+          else:
+            obj.assign(v.to(obj.device))
         else:
-          obj.assign(v.to(obj.device))
-      elif not skip: logging.error(f"MISMATCH SHAPE IN {key}, {obj.shape} {v.shape}")
+          logging.error(f"MISMATCH SHAPE IN {key}, {obj.shape} {v.shape}")
     except Exception as e: raise e
   logging.info(f"Loaded checkpoint '{checkpoint_path}' in {time.time() - start_time:.4f}s")
   return model, optimizer
@@ -516,8 +524,7 @@ def pad_array(arr, target_length):
   pad_width = target_length - current_length
   pad_left = pad_width // 2
   pad_right = pad_width - pad_left
-  padded_arr = np.pad(arr, (pad_left, pad_right), 'constant', constant_values=(0, 0))
-  return padded_arr
+  return np.pad(arr, (pad_left, pad_right), 'constant', constant_values=(0, 0))
 
 def split_list_by_n(list_collection, n, pre=0):
   for i in range(0, len(list_collection), n):
@@ -568,7 +575,12 @@ if __name__=="__main__":
   logging.basicConfig(stream=sys.stdout, level=(logging.INFO if DEBUG < 1 else logging.DEBUG))
   parser = argparse.ArgumentParser()
   parser.add_argument("-m", "--model", default=None, help=f"Specify the model to use. All supported models: {VITS_MODELS.keys()}", required=True)
-  parser.add_argument("-f", "--file", default=DEMO_PATH, help=f"Specify the path of the input file")
+  parser.add_argument(
+      "-f",
+      "--file",
+      default=DEMO_PATH,
+      help="Specify the path of the input file",
+  )
   parser.add_argument("--out_dir", default=str(Path(__file__).parents[1] / "temp"), help="Specify the output path.")
   parser.add_argument("--out_path", default=None, help="Specify the full output path. Overrides the --out_dir and --name parameter.")
   parser.add_argument("--base_name", default="test", help="Specify the base of the output file name. Default is 'test'.")
@@ -623,7 +635,7 @@ if __name__=="__main__":
 
     datas = [data] if per_size == 0 else split_list_by_n(data, per_size, lg_size)
 
-    for k, dat in enumerate(datas):
+    for dat in datas:
       per_length = int(np.ceil(len(dat) / audio_sr * target_sample)) if clip_seconds!=0 else length
       pad_len = int(audio_sr * pad_seconds)
       dat = np.concatenate([np.zeros([pad_len]), dat, np.zeros([pad_len])])
@@ -664,7 +676,8 @@ if __name__=="__main__":
       audio.extend(list(_audio))
 
   audio = np.array(audio)
-  out_path = Path(args.out_path or Path(args.out_dir)/f"{args.model}{f'_spk_{speaker}'}_{args.base_name}.wav")
+  out_path = Path(args.out_path or Path(args.out_dir) /
+                  f"{args.model}_spk_{speaker}_{args.base_name}.wav")
   out_path.parent.mkdir(parents=True, exist_ok=True)
   soundfile.write(out_path, audio, target_sample, format="flac")
   logging.info(f"Saved audio output to {out_path}")

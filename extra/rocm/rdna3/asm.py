@@ -29,7 +29,7 @@ code = open(pathlib.Path(__file__).parent / "prog.s", "r").read()
 gen = []
 FLOPS = 0
 MAX_REG = 251
-for j in range(1):
+for _ in range(1):
   if WMMA:
     KY, KX = 4, 4
     for y in range(KY):
@@ -50,8 +50,10 @@ for j in range(1):
           FLOPS += 8
       else:
         assert F32
-        gen.append(f"v_fmac_f32 v{i+0}, v{i+1}, v{i+2}")
-        gen.append(f"v_fmac_f32 v{i+3}, v{i+4}, v{i+5}")
+        gen.extend((
+            f"v_fmac_f32 v{i + 0}, v{i + 1}, v{i + 2}",
+            f"v_fmac_f32 v{i + 3}, v{i + 4}, v{i + 5}",
+        ))
 code = code.replace("// FLOPS", '\n'.join(gen))
 print(code)
 
@@ -72,7 +74,7 @@ prg = CLProgram("code", asm, binary=True)
 print(colored("running program", "green"))
 G = 512
 FLOPS *= 100000*G*G  # loop * global_size
-for i in range(3):
+for _ in range(3):
   tm = prg([G//256, G], [256, 1], buf, wait=True)
   print(f"ran in {tm*1e3:.2f} ms, {FLOPS/(tm*1e9):.2f} GFLOPS")
 

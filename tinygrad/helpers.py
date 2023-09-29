@@ -25,7 +25,13 @@ def flatten(l:Iterator): return [item for sublist in l for item in sublist]
 def fromimport(mod, frm): return getattr(__import__(mod, fromlist=[frm]), frm)
 def strip_parens(fst): return fst[1:-1] if fst[0] == '(' and fst[-1] == ')' and fst[1:-1].find('(') <= fst[1:-1].find(')') else fst
 def merge_dicts(ds:Iterable[Dict]) -> Dict:
-  assert len(kvs:=set([(k,v) for d in ds for k,v in d.items()])) == len(set(kv[0] for kv in kvs)), f"cannot merge, {kvs} contains different values for the same key"
+  assert len(
+      kvs :=
+      {(k, v)
+       for d in ds for k, v in d.items()}) == len({
+           kv[0]
+           for kv in kvs
+       }), f"cannot merge, {kvs} contains different values for the same key"
   return {k:v for d in ds for k,v in d.items()}
 def partition(lst, fxn):
   a: list[Any] = []
@@ -130,7 +136,11 @@ class dtypes:
   _arg_int32: Final[DType] = DType(2, 4, "_arg_int32", None)
 
 # HACK: staticmethods are not callable in 3.8 so we have to compare the class
-DTYPES_DICT = {k: v for k, v in dtypes.__dict__.items() if not k.startswith('__') and not callable(v) and not v.__class__ == staticmethod}
+DTYPES_DICT = {
+    k: v
+    for k, v in dtypes.__dict__.items() if not k.startswith('__')
+    and not callable(v) and v.__class__ != staticmethod
+}
 
 class GlobalCounters:
   global_ops: ClassVar[int] = 0

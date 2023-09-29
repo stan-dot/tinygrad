@@ -47,9 +47,10 @@ if __name__ == "__main__":
 
   dist.init_oob(world_size)
 
-  processes = []
-  for rank, device in enumerate(devices):
-    processes.append(dist.spawn(rank, device, fn=run, args=()))
+  processes = [
+      dist.spawn(rank, device, fn=run, args=())
+      for rank, device in enumerate(devices)
+  ]
   for p in processes: p.join()
 
   # exit with error code if any of the processes failed

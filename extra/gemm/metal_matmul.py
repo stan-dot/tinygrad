@@ -86,7 +86,15 @@ def timeit(fxn):
   et = fxn()
   # NOTE: et doesn't contain the launch overhead
   return time.perf_counter() - st
-tm = min([timeit(lambda: prog([N//(8*4), N//(8*4*LID), 1], [32, LID, 1], a, b, c, wait=True)) for _ in range(20)])
+tm = min(
+    timeit(lambda: prog(
+        [N // (8 * 4), N // (8 * 4 * LID), 1],
+        [32, LID, 1],
+        a,
+        b,
+        c,
+        wait=True,
+    )) for _ in range(20))
 na = a.toCPU().reshape(N,N)
 comp = nb@nc
 if N <= 32:
@@ -104,7 +112,7 @@ def torch_prog(b, c):
   a = b@c
   torch.mps.synchronize()
   return time.perf_counter() - st
-tm = min([torch_prog(b, c) for _ in range(20)])
+tm = min(torch_prog(b, c) for _ in range(20))
 print(f"{N*N:10d} {tm*1e6:9.2f} us, would be {FLOPS*1e-9/tm:9.2f} GFLOPS matmul in torch")
 
 from tinygrad.tensor import Tensor
@@ -121,5 +129,5 @@ def tiny_prog(b, c):
   a = tiny_jit(b, c)
   METAL.synchronize()
   return time.perf_counter() - st
-tm = min([tiny_prog(b, c) for _ in range(20)])
+tm = min(tiny_prog(b, c) for _ in range(20))
 print(f"{N*N:10d} {tm*1e6:9.2f} us, would be {FLOPS*1e-9/tm:9.2f} GFLOPS matmul in tinygrad")

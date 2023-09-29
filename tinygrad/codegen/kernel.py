@@ -89,9 +89,7 @@ class Kernel:
     self.local_size: Optional[List[int]] = None
 
   def has_variable_shape(self) -> bool:
-    for b in self.bufs:
-      if not all_int(b.st.views[-1].shape): return True
-    return False
+    return any(not all_int(b.st.views[-1].shape) for b in self.bufs)
 
   def shape_offsets(self, i): return itertools.product(*[list(range(s)) for s in self.sts[i].shape[self.shape_len-self.upcasted:][::-1]]) if self.upcasted > 0 else [tuple()]
   def float4_axis(self, i): return [x-(self.shape_len-self.upcasted) for x in self.sts[i].unit_stride_axes() if x >= self.shape_len-self.upcasted and self.sts[i].shape[x]%4 == 0]

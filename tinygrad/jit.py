@@ -27,7 +27,7 @@ class TinyJit:
     if Device.DEFAULT not in JIT_SUPPORTED_DEVICE: return self.fxn(*args, **kwargs)  # only jit on supported device
     # NOTE: this cast is needed since although we know realize will create a ".realized" RawBuffer, the type checker doesn't
     input_rawbuffers: Dict[Union[int, str], Tuple[RawBuffer, ShapeTracker]] = {cast(Union[int, str], k):(cast(RawBuffer, v.realize().lazydata.realized), v.lazydata.st) for k,v in itertools.chain(enumerate(args), kwargs.items()) if v.__class__ is Tensor}
-    assert len(input_rawbuffers) != 0, "no inputs to JIT"
+    assert input_rawbuffers, "no inputs to JIT"
     assert len(set(input_rawbuffers.values())) == len(input_rawbuffers), "duplicate inputs to JIT"
     if self.cnt >= 2:
       try: var_vals: Dict[Variable, int] = kwargs["jit_ctx"]
@@ -59,7 +59,9 @@ class TinyJit:
             self.updatable_entries[j_].append(i)
         for i in range(len(cache[2])): self.updatable_entries[j_].append(len(cache[1])+i)
         #if prg.local_size is None: prg.local_size = prg.optimize_local_size(args, preserve_output=True)  # the JIT can optimize local
-      assert set([x[0] for x in self.input_replace.values()]) == set(input_rawbuffers.keys()), "some input tensors not found"
+      assert {x[0]
+              for x in self.input_replace.values()
+              } == set(input_rawbuffers.keys()), "some input tensors not found"
       self.batch_executor = self.jit_cache[0][0].batch_exec(self.jit_cache) if hasattr(self.jit_cache[0][0], 'batch_exec') else BasicBatchExecutor(self.jit_cache)
       for (j,i) in self.input_replace.keys(): self.jit_cache[j][1][i] = None
     elif self.cnt == 0:
@@ -71,7 +73,10 @@ class _CacheCollector:
   class _Placeholder:
     def __init__(self, buf): self.size, self.dtype, self._device, self.ref, self.buftype = buf.size, buf.dtype, getattr(buf, '_device', None), ref(buf), type(buf)
     def alive(self): return self.ref() is not None
-    def alloc_rawbuf(self): return self.buftype(self.size, self.dtype, **({'device':self._device} if self._device is not None else dict()))
+    def alloc_rawbuf(self):
+      return self.buftype(
+          self.size, self.dtype,
+          **{'device': self._device} if self._device is not None else {})
 
   def __init__(self):
     self.cache: Optional[List[Tuple[Callable, List[Any], Dict[Any,Any]]]] = None

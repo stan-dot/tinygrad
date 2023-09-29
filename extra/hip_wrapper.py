@@ -15,7 +15,8 @@ try:
     return _libhip.hipGetErrorString(status).decode("utf-8")
 
   def hipCheckStatus(status):
-    if status != 0: raise RuntimeError("HIP error %s: %s" % (status, hipGetErrorString(status)))
+    if status != 0:
+      raise RuntimeError(f"HIP error {status}: {hipGetErrorString(status)}")
 
   _libhip.hipDeviceSynchronize.restype = int
   _libhip.hipDeviceSynchronize.argtypes = []

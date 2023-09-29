@@ -26,13 +26,12 @@ if __name__ == "__main__":
     # imagenet labels, move to datasets?
     lbls = fetch("https://gist.githubusercontent.com/yrevar/942d3a0ac09ec9e5eb3a/raw/238f720ff059c1f82f368259d1ca4ffa5dd8f9f5/imagenet1000_clsidx_to_labels.txt")
     lbls = ast.literal_eval(lbls.decode('utf-8'))
-    lbls = ['"'+lbls[i]+'"' for i in range(1000)]
+    lbls = [f'"{lbls[i]}"' for i in range(1000)]
     cprog.append(f"char *lbls[] = {{{','.join(lbls)}}};")
     cprog.append(f"float input[{inp_size}];")
-    cprog.append(f"float outputs[{out_size}];")
-
-    # buffers (empty + weights)
-    cprog.append("""
+    cprog.extend((
+        f"float outputs[{out_size}];",
+        """
   int main(int argc, char* argv[]) {
     int DEBUG = getenv("DEBUG") != NULL ? atoi(getenv("DEBUG")) : 0;
     int X=0, Y=0, chan=0;
@@ -62,8 +61,8 @@ if __name__ == "__main__":
     }
     if (DEBUG) printf("category : %d (%s) with %f\\n", best_idx, lbls[best_idx], best);
     else printf("%s\\n", lbls[best_idx]);
-  }""")
-
+  }""",
+    ))
     # CLANG=1 python3 examples/compile_efficientnet.py | clang -O2 -lm -x c - -o recognize && DEBUG=1 time ./recognize docs/showcase/stable_diffusion_by_tinygrad.jpg
     # category : 281 (tabby, tabby cat) with 9.452788
     print('\n'.join(cprog))

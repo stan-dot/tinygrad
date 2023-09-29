@@ -54,7 +54,7 @@ class Slicer:  # from https://github.com/svc-develop-team/so-vits-svc/
   def __init__(self, sr: int, threshold: float = -40., min_length: int = 5000, min_interval: int = 300, hop_size: int = 20, max_sil_kept: int = 5000):
     if not min_length >= min_interval >= hop_size:
       raise ValueError('The following condition must be satisfied: min_length >= min_interval >= hop_size')
-    if not max_sil_kept >= hop_size:
+    if max_sil_kept < hop_size:
       raise ValueError('The following condition must be satisfied: max_sil_kept >= hop_size')
     min_interval = sr * min_interval / 1000
     self.threshold = 10 ** (threshold / 20.)
@@ -109,7 +109,7 @@ class Slicer:  # from https://github.com/svc-develop-team/so-vits-svc/
       silence_end = min(total_frames, silence_start + self.max_sil_kept)
       pos = rms_list[silence_start: silence_end + 1].argmin() + silence_start
       sil_tags.append((pos, total_frames + 1))
-    if len(sil_tags) == 0: return {"0": {"slice": False, "split_time": f"0,{len(waveform)}"}}  # Apply and return slices.
+    if not sil_tags: return {"0": {"slice": False, "split_time": f"0,{len(waveform)}"}}  # Apply and return slices.
     chunks = []
     if sil_tags[0][0]:
       chunks.append({"slice": False, "split_time": f"0,{min(waveform.shape[0], sil_tags[0][0] * self.hop_size)}"})
@@ -118,15 +118,13 @@ class Slicer:  # from https://github.com/svc-develop-team/so-vits-svc/
       chunks.append({"slice": True, "split_time": f"{sil_tags[i][0] * self.hop_size},{min(waveform.shape[0], sil_tags[i][1] * self.hop_size)}"})
     if sil_tags[-1][1] * self.hop_size < len(waveform):
       chunks.append({"slice": False, "split_time": f"{sil_tags[-1][1] * self.hop_size},{len(waveform)}"})
-    chunk_dict = {}
-    for i in range(len(chunks)): chunk_dict[str(i)] = chunks[i]
-    return chunk_dict
+    return {str(i): chunks[i] for i in range(len(chunks))}
 
 # sinc_interp_hann audio resampling
 class Resample:
   def __init__(self, orig_freq:int=16000, new_freq:int=16000, lowpass_filter_width:int=6, rolloff:float=0.99, beta:Optional[float]=None, dtype:Optional[dtypes]=None):
     self.orig_freq, self.new_freq, self.lowpass_filter_width, self.rolloff, self.beta = orig_freq, new_freq, lowpass_filter_width, rolloff, beta
-    self.gcd = math.gcd(int(self.orig_freq), int(self.new_freq))
+    self.gcd = math.gcd(self.orig_freq, self.new_freq)
     self.kernel, self.width = self._get_sinc_resample_kernel(dtype) if self.orig_freq != self.new_freq else (None, None)
   def __call__(self, waveform:Tensor) -> Tensor:
     if self.orig_freq == self.new_freq: return waveform
@@ -142,8 +140,7 @@ class Resample:
     resampled = waveform[:, None].conv2d(self.kernel, stride=orig_freq)
     resampled = resampled.transpose(1, 2).reshape(num_wavs, -1)
     resampled = resampled[..., :target_length]
-    resampled = resampled.reshape(shape[:-1] + resampled.shape[-1:])  # unpack batch
-    return resampled
+    return resampled.reshape(shape[:-1] + resampled.shape[-1:])
   def _get_sinc_resample_kernel(self, dtype=None):
     orig_freq, new_freq = (int(self.orig_freq) // self.gcd), (int(self.new_freq) // self.gcd)
     if self.lowpass_filter_width <= 0: raise ValueError("Low pass filter width should be positive.")
@@ -169,8 +166,7 @@ def sinc_interp_resample(x:Tensor, orig_freq:int=16000, new_freq:int=1600, lowpa
 def cut(audio_path, db_thresh=-30, min_len=5000):
   audio, sr = librosa.load(audio_path, sr=None)
   slicer = Slicer(sr=sr, threshold=db_thresh, min_length=min_len)
-  chunks = slicer.slice(audio)
-  return chunks
+  return slicer.slice(audio)
 
 def chunks2audio(audio_path, chunks):
   chunks = dict(chunks)
@@ -179,7 +175,7 @@ def chunks2audio(audio_path, chunks):
     audio = audio.mean(0).unsqueeze(0)
   audio = audio.numpy()[0]
   result = []
-  for k, v in chunks.items():
+  for v in chunks.values():
     tag = v["split_time"].split(",")
     if tag[0] != tag[1]:
       result.append((v["slice"], audio[int(tag[0]):int(tag[1])]))

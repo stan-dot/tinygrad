@@ -51,8 +51,7 @@ def box_iou(box1, box2):
   inter = wh[:, :, 0] * wh[:, :, 1]
   area1 = box_area(box1)[:, None]
   area2 = box_area(box2)[None, :]
-  iou = inter / (area1 + area2 - inter)
-  return iou
+  return inter / (area1 + area2 - inter)
 
 def compute_nms(boxes, scores, iou_threshold):
   order, keep = scores.argsort()[::-1], []
@@ -103,7 +102,14 @@ def postprocess(preds, img, orig_imgs):
   return all_preds
 
 def draw_bounding_boxes_and_save(orig_img_paths, output_img_paths, all_predictions, class_labels, iou_threshold=0.5):
-  color_dict = {label: tuple((((i+1) * 50) % 256, ((i+1) * 100) % 256, ((i+1) * 150) % 256)) for i, label in enumerate(class_labels)}
+  color_dict = {
+      label: (
+          ((i + 1) * 50) % 256,
+          ((i + 1) * 100) % 256,
+          ((i + 1) * 150) % 256,
+      )
+      for i, label in enumerate(class_labels)
+  }
   font = cv2.FONT_HERSHEY_SIMPLEX
 
   def is_bright_color(color):
@@ -366,8 +372,7 @@ class DetectionHead:
     x_cat = y[0].cat(y[1], y[2], dim=2)
     box, cls = x_cat[:, :self.ch * 4], x_cat[:, self.ch * 4:]
     dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
-    z = dbox.cat(cls.sigmoid(), dim=1)
-    return z
+    return dbox.cat(cls.sigmoid(), dim=1)
 
 class YOLOv8:
   def __init__(self, w, r,  d, num_classes): #width_multiple, ratio_multiple, depth_multiple
